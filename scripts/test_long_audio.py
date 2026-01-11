@@ -738,7 +738,7 @@ if __name__ == "__main__":
 
     # Diffusion
     parser.add_argument("--eta", type=float, default=0.0, help="DDIM eta parameter.")
-    parser.add_argument("--num_infer_steps", type=int, default=50, help="Number of DDIM steps.")
+    parser.add_argument("--num_infer_steps", type=int, default=200, help="Number of DDIM steps.")
     parser.add_argument("--num_candidates", type=int, default=8,
                         help="Number of enroll candidates per chunk per speaker from JSON.")
     parser.add_argument("--sample-rate", type=int, default=16000,
