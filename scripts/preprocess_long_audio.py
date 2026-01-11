@@ -247,6 +247,110 @@ def build_time_grid(segments: List[Segment], audio_duration: float) -> List[floa
     boundaries = sorted(set(boundaries))
     return boundaries
 
+def build_chunks_from_silence_avoid_speech(
+    audio_duration: float,
+    silence_intervals: List[Tuple[float, float]],
+    raw_segments_all: List[Segment], 
+    min_chunk_len: float = 5.0,
+    max_chunk_len: float = 10.0,
+    guard_eps: float = 0.02,
+) -> List[Tuple[float, float]]:
+    """
+    Build chunks sequentially from t=0 using silence midpoints as preferred cut points,
+    BUT avoid cutting inside any RAW diarization speech region.
+    """
+
+    # precompute silence midpoints
+    silence_midpoints = sorted([(s + e) / 2.0 for (s, e) in silence_intervals])
+
+    # precompute raw boundaries (all starts/ends)
+    raw_boundaries = [0.0, audio_duration]
+    for seg in raw_segments_all:
+        raw_boundaries.append(float(seg.start))
+        raw_boundaries.append(float(seg.end))
+    raw_boundaries = sorted(set(raw_boundaries))
+
+    def is_in_speech(t: float) -> bool:
+        # if t is strictly inside any speech segment (with eps margin), return True
+        for seg in raw_segments_all:
+            if (seg.start + guard_eps) < t < (seg.end - guard_eps):
+                return True
+        return False
+
+    def nearest_safe_boundary(t: float, lo: float, hi: float) -> Optional[float]:
+        """
+        Find a boundary in [lo, hi] close to t that is NOT inside speech.
+        If none, return None.
+        """
+        cands = [b for b in raw_boundaries if lo <= b <= hi]
+        if not cands:
+            return None
+        safe = [b for b in cands if not is_in_speech(b)]
+        if not safe:
+            return None
+        return min(safe, key=lambda x: abs(x - t))
+
+    def nearest_boundary_any(t: float, lo: float, hi: float) -> Optional[float]:
+        cands = [b for b in raw_boundaries if lo <= b <= hi]
+        if not cands:
+            return None
+        return min(cands, key=lambda x: abs(x - t))
+
+    chunks: List[Tuple[float, float]] = []
+    cur_start = 0.0
+    target_center_offset = 0.5 * (min_chunk_len + max_chunk_len)
+
+    while cur_start < audio_duration - 1e-6:
+        remaining = audio_duration - cur_start
+        if remaining <= min_chunk_len:
+            chunks.append((cur_start, audio_duration))
+            break
+
+        target_min = cur_start + min_chunk_len
+        target_max = min(cur_start + max_chunk_len, audio_duration)
+
+        # 1) pick a proposed end based on silence midpoint if exists
+        candidates = [m for m in silence_midpoints if (target_min <= m <= target_max)]
+        if candidates:
+            target = cur_start + target_center_offset
+            proposed_end = min(candidates, key=lambda x: abs(x - target))
+            proposed_end = min(max(proposed_end, target_min), target_max)
+        else:
+            proposed_end = target_max
+
+        # 2) guard: avoid cutting inside speech
+        end = proposed_end
+        if is_in_speech(end):
+            # try to find a safe boundary within window
+            target = cur_start + target_center_offset
+            safe_b = nearest_safe_boundary(target, target_min, target_max)
+            if safe_b is not None:
+                end = safe_b
+            else:
+                # if no safe boundary, at least snap to nearest raw boundary to reduce cutting mid-phoneme
+                any_b = nearest_boundary_any(target, target_min, target_max)
+                if any_b is not None:
+                    end = any_b
+                else:
+                    end = proposed_end  # fallback
+
+        # ensure progress
+        if end <= cur_start + 1e-4:
+            end = min(cur_start + max_chunk_len, audio_duration)
+
+        chunks.append((cur_start, end))
+        cur_start = end
+
+    # merge last short chunk
+    if len(chunks) >= 2:
+        last_start, last_end = chunks[-1]
+        if last_end - last_start < min_chunk_len:
+            prev_start, _ = chunks[-2]
+            chunks[-2] = (prev_start, last_end)
+            chunks.pop()
+
+    return [(float(s), float(e)) for (s, e) in chunks]
+
 
 def compute_silence_intervals_from_diarization(
     segments: List[Segment],
@@ -630,11 +734,14 @@ def process_audio_with_diarization(
         global_invalid_enroll_by_speaker[spk] = invalid_enroll
 
     # 6) Chunking
-    chunks = build_chunks_from_silence(
+
+    chunks = build_chunks_from_silence_avoid_speech(
         audio_duration=audio_duration,
         silence_intervals=silence_intervals,
+        raw_segments_all=raw_segments,
         min_chunk_len=min_chunk_len,
         max_chunk_len=max_chunk_len,
+        guard_eps=0.02,
     )
 
     # 7) Per-chunk assignment
@@ -774,7 +881,7 @@ def main():
     parser.add_argument("--max_enroll_per_speaker_per_chunk", type=int, default=8,
                         help="Enroll segments per speaker per chunk (will repeat if not enough).")
 
-    parser.add_argument("--min_silence_len", type=float, default=0.8, help="Minimum silence length (seconds) used to cut chunks.")
+    parser.add_argument("--min_silence_len", type=float, default=0.5, help="Minimum silence length (seconds) used to cut chunks.")
 
     args = parser.parse_args()
 
