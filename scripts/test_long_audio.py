@@ -8,7 +8,7 @@
 #   - multi-enroll candidates per speaker per chunk
 #   - +1 seed per enroll candidate to avoid identical generations
 #   - extra diarization-masked enroll candidate (mixture masked by diar spans)
-#   - VAD using pydub.detect_nonsilent (Meta-style, rel_to_max or abs)
+#   - VAD using pydub.detect_nonsilent (rel_to_max or abs)
 #   - reranking using: score = recall - alpha * fp_rate
 #       recall: predicted non-silent overlaps target speaker diarization
 #       fp_rate: predicted non-silent outside target diarization, normalized by non-target duration
@@ -289,6 +289,11 @@ def detect_nonsilent_from_wav(
         # convert peak_rms ratio -> dB and add to sil_threshold_db => absolute db threshold
         sil_threshold_db_abs = float(sil_threshold_db + pydub.utils.ratio_to_db(peak_rms))
         dbg["peak_rms"] = float(peak_rms)
+        # near-silent: skip ratio_to_db to avoid -inf and broken detect_nonsilent
+        if peak_rms < 1e-6:
+            dbg["sil_threshold_db_abs"] = None
+            dbg["note"] = "near_silent_skip"
+            return [], dbg
         dbg["sil_threshold_db_abs"] = float(sil_threshold_db_abs)
     elif threshold_mode == "abs":
         sil_threshold_db_abs = float(sil_threshold_db)
