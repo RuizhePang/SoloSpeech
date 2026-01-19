@@ -779,7 +779,7 @@ if __name__ == "__main__":
                         help="Print VAD spans for each candidate.")
 
     # Reranking
-    parser.add_argument("--alpha_fp", type=float, default=0.5,
+    parser.add_argument("--alpha_fp", type=float, default=1.0,
                         help="Penalty weight for fp_rate: score = recall - alpha_fp * fp_rate")
 
     # Saving & debug
