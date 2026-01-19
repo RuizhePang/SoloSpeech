@@ -430,11 +430,12 @@ def compute_pure_and_overlap_regions(
         if not active:
             continue
 
-        if len(active) == 1:
-            spk = active[0]
+        unique_speakers = set(active)
+        if len(unique_speakers) == 1:
+            spk = next(iter(unique_speakers))
             pure_by_speaker.setdefault(spk, []).append(Segment(start, end, spk))
         else:
-            for spk in set(active):
+            for spk in unique_speakers:
                 overlap_by_speaker.setdefault(spk, []).append(Segment(start, end, spk))
 
     for spk, segs in pure_by_speaker.items():
@@ -590,62 +591,6 @@ def pick_invalid_in_chunk_from_speech(
 
 
 # =========================
-# 6. Chunking based on silence
-# =========================
-
-def build_chunks_from_silence(
-    audio_duration: float,
-    silence_intervals: List[Tuple[float, float]],
-    min_chunk_len: float = 5.0,
-    max_chunk_len: float = 10.0,
-) -> List[Tuple[float, float]]:
-    """
-    Build chunks sequentially from t=0, using silence midpoints as preferred cut points.
-    """
-    chunks: List[Tuple[float, float]] = []
-    silence_midpoints = sorted([(s + e) / 2.0 for (s, e) in silence_intervals])
-
-    cur_start = 0.0
-    target_center_offset = 0.5 * (min_chunk_len + max_chunk_len)
-
-    while cur_start < audio_duration - 1e-6:
-        remaining = audio_duration - cur_start
-
-        # If remaining is smaller than min_chunk_len, just take the tail
-        if remaining <= min_chunk_len:
-            chunks.append((cur_start, audio_duration))
-            break
-
-        target_min = cur_start + min_chunk_len
-        target_max = min(cur_start + max_chunk_len, audio_duration)
-
-        candidates = [m for m in silence_midpoints if (m >= target_min and m <= target_max)]
-
-        if candidates:
-            target = cur_start + target_center_offset
-            end = min(max(min(candidates, key=lambda x: abs(x - target)), target_min), target_max)
-        else:
-            # no silence in this window, cut at max_len or end of audio
-            end = target_max
-
-        if end <= cur_start:
-            end = min(cur_start + max_chunk_len, audio_duration)
-
-        chunks.append((cur_start, end))
-        cur_start = end
-
-    # If last chunk is too short and there is more than one chunk, merge it
-    if len(chunks) >= 2:
-        last_start, last_end = chunks[-1]
-        if last_end - last_start < min_chunk_len:
-            prev_start, _ = chunks[-2]
-            chunks[-2] = (prev_start, last_end)
-            chunks.pop()
-
-    return chunks
-
-
-# =========================
 # 7. Main processing
 # =========================
 
@@ -658,7 +603,7 @@ def process_audio_with_diarization(
     min_enroll_len: float = 1.5,
     max_enroll_len: float = 4.0,
     max_enroll_per_speaker_global: int = 10,
-    max_enroll_per_speaker_per_chunk: int = 5,
+    max_enroll_per_speaker_per_chunk: int = 8,
     min_silence_len: float = 0.8,
 ):
     """
