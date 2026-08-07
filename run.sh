@@ -42,5 +42,5 @@ Logging to: $explog"
 "$cmd" "${scheduler_arguments[@]}" "$explog" \
     "$PYTHON_BIN" scripts/train/vae.py \
     --config-name="${config}" \
-    --save_dir="${save_dir}" \
-    --data_dir="${data_dir}"
+    save_dir="${save_dir}" \
+    data_dir="${data_dir}"
