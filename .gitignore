@@ -1,0 +1,117 @@
+Python
+
+pycache/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+Virtual environments
+
+.venv/
+venv/
+env/
+ENV/
+.micromamba/
+.conda/
+
+IDE / Editor
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+Logs
+
+logs/
+*_log/
+*.log
+wandb/
+runs/
+tensorboard/
+
+Checkpoints / pretrained models
+
+ckpt/
+*_ckpt/
+checkpoints/
+pretrained_models/
+*.ckpt
+*.pth
+*.pt
+
+Hugging Face / model cache
+
+.cache/
+huggingface/
+hf_cache/
+
+Datasets / generated data
+
+data/
+dataset/
+datasets/
+LibriMixData/
+Libri2Mix/
+Libri3Mix/
+*.csv.tmp
+
+Audio outputs / inference results
+
+outputs/
+output/
+results/
+samples/
+generated/
+*.wav
+*.flac
+*.mp3
+
+Temporary files
+
+tmp/
+temp/
+*.tmp
+*.bak
+
+Jupyter
+
+.ipynb_checkpoints/
+
+Coverage
+
+.coverage
+htmlcov/
+
+Local configuration / secrets
+
+.env
+.env.*
+*.local
+
+PBS / Slurm outputs
+
+.o[0-9]
+.e[0-9]
+.out
+slurm-.out
+
+macOS
+
+.AppleDouble
+.LSOverride
+
+Keep source/config files even if patterns above change
+
+!config/
+!config//*.yaml
+!config//.yml
+!config/**/.json
