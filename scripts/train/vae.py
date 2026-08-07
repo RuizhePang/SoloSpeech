@@ -195,6 +195,7 @@ def main(cfg: DictConfig):
         default_root_dir=save_dir,
         gradient_clip_val=(vae_cfg.training.gradient_clip_val),
         reload_dataloaders_every_n_epochs=0,
+        enable_progress_bar=False,
     )
 
     # ---------------------------------------------------------
