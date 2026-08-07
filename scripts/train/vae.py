@@ -37,7 +37,7 @@ class ModelConfigEmbedderCallback(pl.Callback):
 
 @hydra.main(
     version_base=None,
-    config_path="../../configs",
+    config_path="../../configs/tse",
     config_name="default",
 )
 def main(cfg: DictConfig):
