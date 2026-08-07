@@ -489,11 +489,11 @@ class AutoencoderDemoCallback(pl.Callback):
                     global_step=step,
                     dataformats="HWC",
                 )
-                    except Exception as e:
-                        print(f'{type(e).__name__}: {e}')
-                        raise e
-                    finally:
-                        module.train()
+        except Exception as e:
+            print(f'{type(e).__name__}: {e}')
+            raise e
+        finally:
+            module.train()
 
 def create_loss_modules_from_bottleneck(bottleneck, loss_config):
     losses = []
