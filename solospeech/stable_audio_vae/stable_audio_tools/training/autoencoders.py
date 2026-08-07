@@ -1,6 +1,7 @@
 import torch
 import torchaudio
 import wandb
+from loguru import logger
 from einops import rearrange
 from safetensors.torch import save_file, save_model
 from ema_pytorch import EMA
@@ -347,7 +348,10 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         for loss_name, loss_value in losses.items():
             log_dict[f'train/{loss_name}'] = loss_value.detach()
 
-        self.log_dict(log_dict, prog_bar=True, on_step=True)
+        self.log_dict(log_dict, prog_bar=False, on_step=True)
+        logger_str = f"Step {self.global_step}: "
+        logger_str += ", ".join([f"{k}: {v:.6f}" for k, v in log_dict.items()])
+        logger.info(logger_str)
 
         return loss
     
