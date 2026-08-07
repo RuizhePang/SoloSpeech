@@ -12,7 +12,7 @@ model:
       latent_dim: 256
       n_fft: 640
       hop_length : 320
-      win_lenght: 640
+      win_length: 640
       hidden_channels: 256
       n_head: 4
       approx_qk_dim: 512
@@ -28,7 +28,7 @@ model:
       latent_dim: 128
       n_fft: 640
       hop_length : 320
-      win_lenght: 640
+      win_length: 640
       hidden_channels: 256
       n_head: 4
       approx_qk_dim: 512
