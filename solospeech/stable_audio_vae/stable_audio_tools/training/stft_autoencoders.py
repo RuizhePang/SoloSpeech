@@ -438,7 +438,7 @@ class AutoencoderDemoCallback(pl.Callback):
 
             log_dict[f'recon_melspec_left'] = wandb.Image(audio_spectrogram_image(reals_fakes))
 
-            trainer.logger.experiment.log(log_dict)
+            trainer.logger.log_metrics(log_dict, step=trainer.global_step)
         except Exception as e:
             print(f'{type(e).__name__}: {e}')
             raise e
