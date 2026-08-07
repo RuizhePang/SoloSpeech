@@ -37,7 +37,7 @@ if [[ -f "$explog" ]]; then
     echo "Log file $explog already exists. Please remove it before running the script."
     exit 1
 fi
-Echo "Running training with config: $config \
+echo "Running training with config: $config \
     Logging to: $explog"
 "$cmd" "${scheduler_arguments[@]}" "$explog" \
     "$PYTHON_BIN" scripts/train/vae.py \
