@@ -423,27 +423,77 @@ class AutoencoderDemoCallback(pl.Callback):
             # Put the demos together
             reals_fakes = rearrange(reals_fakes, 'b d n -> d (b n)')
 
-            log_dict = {}
-            
-            filename = f'recon_{trainer.global_step:08}.wav'
-            reals_fakes = reals_fakes.to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-            torchaudio.save(filename, reals_fakes, self.sample_rate)
+            # log_dict = {}
+            # 
+            # filename = f'recon_{trainer.global_step:08}.wav'
+            # reals_fakes = reals_fakes.to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+            # torchaudio.save(filename, reals_fakes, self.sample_rate)
+            #
+            # log_dict[f'recon'] = wandb.Audio(filename,
+            #                                     sample_rate=self.sample_rate,
+            #                                     caption=f'Reconstructed')
+            # 
+            # log_dict[f'embeddings_3dpca'] = pca_point_cloud(latents)
+            # log_dict[f'embeddings_spec'] = wandb.Image(tokens_spectrogram_image(latents))
+            #
+            # log_dict[f'recon_melspec_left'] = wandb.Image(audio_spectrogram_image(reals_fakes))
+            #
+            # trainer.logger.log_metrics(log_dict, step=trainer.global_step)
+            # TensorBoard writer
+            writer = trainer.logger.experiment
+            step = trainer.global_step
 
-            log_dict[f'recon'] = wandb.Audio(filename,
-                                                sample_rate=self.sample_rate,
-                                                caption=f'Reconstructed')
-            
-            log_dict[f'embeddings_3dpca'] = pca_point_cloud(latents)
-            log_dict[f'embeddings_spec'] = wandb.Image(tokens_spectrogram_image(latents))
+            # ---------------------------------------------------------
+            # Audio
+            # ---------------------------------------------------------
+            # TensorBoard expects float audio in [-1, 1]
+            reals_fakes_float = reals_fakes.to(torch.float32).clamp(-1, 1).cpu()
 
-            log_dict[f'recon_melspec_left'] = wandb.Image(audio_spectrogram_image(reals_fakes))
+            # Save wav separately if you still want reconstructed wav files
+            filename = f'recon_{step:08}.wav'
+            reals_fakes_int16 = reals_fakes_float.mul(32767).to(torch.int16)
+            torchaudio.save(filename, reals_fakes_int16, self.sample_rate)
 
-            trainer.logger.log_metrics(log_dict, step=trainer.global_step)
-        except Exception as e:
-            print(f'{type(e).__name__}: {e}')
-            raise e
-        finally:
-            module.train()
+            # TensorBoard add_audio expects [channels, samples]
+            writer.add_audio(
+                "recon",
+                reals_fakes_float,
+                global_step=step,
+                sample_rate=self.sample_rate,
+            )
+
+            # ---------------------------------------------------------
+            # Images
+            # ---------------------------------------------------------
+            embeddings_spec = tokens_spectrogram_image(latents)
+            recon_melspec = audio_spectrogram_image(reals_fakes_float)
+
+            # aeiou visualization functions normally return PIL images,
+            # so convert them to tensors before sending to TensorBoard
+            import numpy as np
+
+            if hasattr(embeddings_spec, "convert"):
+                embeddings_spec = np.array(embeddings_spec.convert("RGB"))
+                writer.add_image(
+                    "embeddings_spec",
+                    embeddings_spec,
+                    global_step=step,
+                    dataformats="HWC",
+                )
+
+            if hasattr(recon_melspec, "convert"):
+                recon_melspec = np.array(recon_melspec.convert("RGB"))
+                writer.add_image(
+                    "recon_melspec_left",
+                    recon_melspec,
+                    global_step=step,
+                    dataformats="HWC",
+                )
+                    except Exception as e:
+                        print(f'{type(e).__name__}: {e}')
+                        raise e
+                    finally:
+                        module.train()
 
 def create_loss_modules_from_bottleneck(bottleneck, loss_config):
     losses = []
