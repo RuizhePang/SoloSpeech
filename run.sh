@@ -30,6 +30,8 @@ save_dir="experiments/${config}"
 
 log_dir="$save_dir/logs"
 
+export PYTHONPATH="$PWD/solospeech/stable_audio_vae:${PYTHONPATH:-}"
+
 explog="$log_dir/train.vae.log"
 "$cmd" "${scheduler_arguments[@]}" "$explog" \
     "$PYTHON_BIN" scripts/train/vae.py \
