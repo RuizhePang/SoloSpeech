@@ -45,6 +45,7 @@ ckpt/
 *_ckpt/
 checkpoints/
 pretrained_models/
+pretrained/
 *.ckpt
 *.pth
 *.pt
