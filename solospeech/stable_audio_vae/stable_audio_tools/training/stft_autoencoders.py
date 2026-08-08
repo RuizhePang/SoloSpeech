@@ -1,6 +1,5 @@
 import torch
 import torchaudio
-import wandb
 from einops import rearrange
 from safetensors.torch import save_file, save_model
 from ema_pytorch import EMA
@@ -423,22 +422,6 @@ class AutoencoderDemoCallback(pl.Callback):
             # Put the demos together
             reals_fakes = rearrange(reals_fakes, 'b d n -> d (b n)')
 
-            # log_dict = {}
-            # 
-            # filename = f'recon_{trainer.global_step:08}.wav'
-            # reals_fakes = reals_fakes.to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-            # torchaudio.save(filename, reals_fakes, self.sample_rate)
-            #
-            # log_dict[f'recon'] = wandb.Audio(filename,
-            #                                     sample_rate=self.sample_rate,
-            #                                     caption=f'Reconstructed')
-            # 
-            # log_dict[f'embeddings_3dpca'] = pca_point_cloud(latents)
-            # log_dict[f'embeddings_spec'] = wandb.Image(tokens_spectrogram_image(latents))
-            #
-            # log_dict[f'recon_melspec_left'] = wandb.Image(audio_spectrogram_image(reals_fakes))
-            #
-            # trainer.logger.log_metrics(log_dict, step=trainer.global_step)
             # TensorBoard writer
             writer = trainer.logger.experiment
             step = trainer.global_step
