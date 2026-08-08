@@ -15,10 +15,10 @@ if [[ "${HOSTNAME:-}" == asp2a* ]]; then
     project="personal-n2602009"; name="SoloSpeech"; qos="normal"; n_nodes=1; n_cpus=10; n_gpus=1; time=12:00:00; mem=64G
 
     scheduler_arguments=(
-        --queue g2
+        -q g2
         -P ${project}
         -N ${name}
-        -q ${qos}
+        # -q ${qos}
         -l select=${n_nodes}:ncpus=${n_cpus}:ngpus=${n_gpus}:mem=${mem}
         -l walltime=${time}
         -o /dev/null
