@@ -1,0 +1,10 @@
+defaults:
+  - vae: stftvae_16k_320x
+  - _self_
+
+save_dir: null
+data_dir: null
+
+hydra:
+  run:
+    dir: .

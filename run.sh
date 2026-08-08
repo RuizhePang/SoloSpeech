@@ -73,3 +73,20 @@ if [[ $stage -le 2 && $stop_stage -ge 2 ]]; then
         save_dir="${save_dir}/compressor" \
         data_dir="${data_dir}"
 fi
+
+if [[ $stage -le 3 && $stop_stage -ge 3 ]]; then
+    export PYTHONPATH="$PWD:$PWD/solospeech/stable_audio_vae:${PYTHONPATH:-}"
+    explog="$log_dir/extract.vae.log"
+    if [[ -f "$explog" ]]; then
+        echo "Log file $explog already exists. Please remove it before running the script."
+        exit 1
+    fi
+
+    echo "Stage 3: encoding Libri2Mix wav files with VAE
+    Logging to: $explog"
+    "$cmd" "${scheduler_arguments[@]}" "$explog" \
+        "$PYTHON_BIN" scripts/extract_vae.py \
+        --config-name="${config}" \
+        save_dir="${save_dir}/compressor" \
+        data_dir="${data_dir}"
+fi
