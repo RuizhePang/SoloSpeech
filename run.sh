@@ -25,10 +25,11 @@ if [[ "${HOSTNAME:-}" == asp2a* ]]; then
     )
 fi
 
-stage=1
-stop_stage=1
+stage=3
+stop_stage=3
 
-config=SoloSpeech
+config=pretrained
+# config=SoloSpeech
 
 save_dir="experiments/${config}"
 log_dir="$save_dir/logs"
