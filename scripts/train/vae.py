@@ -211,6 +211,12 @@ def main(cfg: DictConfig):
     if vae_cfg.checkpoint.ckpt_path:
         ckpt_path = to_absolute_path(vae_cfg.checkpoint.ckpt_path)
 
+    elif ckpt_dir is not None:
+        last_ckpt_path = os.path.join(ckpt_dir, "last.ckpt")
+        if os.path.isfile(last_ckpt_path):
+            ckpt_path = last_ckpt_path
+            logger.info(f"Resuming from checkpoint: {ckpt_path}")
+
     # ---------------------------------------------------------
     # Train
     # ---------------------------------------------------------
