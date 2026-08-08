@@ -351,7 +351,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         self.log_dict(log_dict, prog_bar=True, on_step=True)
         logger_str = f"Step {self.global_step}: "
-        logger_str += ", ".join([f"{k}: {v.item():.6f}" for k, v in log_dict.items()])
+        logger_str += ", ".join([f"{k}: {v:.6f}" for k, v in log_dict.items()])
         logger.info(logger_str)
 
         return loss
