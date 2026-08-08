@@ -129,7 +129,8 @@ def main(cfg: DictConfig):
     encoded = 0
     skipped = 0
 
-    for wav_path in tqdm(wavs, desc="Encoding VAE latents"):
+    for wav_path in wavs:
+        logger.info(f"Encoding idx {encoded + skipped + 1}/{len(wavs)}: {wav_path}")
         out_path = output_path_for(wav_path, relative_root, output_root)
         if out_path.exists():
             skipped += 1
