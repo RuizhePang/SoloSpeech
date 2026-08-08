@@ -25,22 +25,51 @@ if [[ "${HOSTNAME:-}" == asp2a* ]]; then
     )
 fi
 
-config=SoloSpeech
-save_dir="experiments/${config}"
+stage=0
+stop_stage=100
 
+config=SoloSpeech
+
+save_dir="experiments/${config}"
 log_dir="$save_dir/logs"
 
-export PYTHONPATH="$PWD/solospeech/stable_audio_vae:${PYTHONPATH:-}"
+. ./tools/parse_option.sh
 
-explog="$log_dir/train.vae.log"
-if [[ -f "$explog" ]]; then
-    echo "Log file $explog already exists. Please remove it before running the script."
-    exit 1
+mkdir -p "$log_dir"
+
+if [[ $stage -le 0 && $stop_stage -ge 0 ]]; then
+    echo "Stage 0: downloading/generating Libri2Mix into $data_dir/Libri2Mix"
+    bash scripts/download_librimix.sh \
+        "$data_dir/Libri2Mix" \
+        "$PYTHON_BIN" \
+        "16k" \
+        "min" \
+        "mix_clean mix_both"
 fi
-echo "Running training with config: $config
-Logging to: $explog"
-"$cmd" "${scheduler_arguments[@]}" "$explog" \
-    "$PYTHON_BIN" scripts/train/vae.py \
-    --config-name="${config}" \
-    save_dir="${save_dir}/compressor" \
-    data_dir="${data_dir}"
+
+if [[ $stage -le 1 && $stop_stage -ge 1 ]]; then
+    echo "Stage 1: preparing SpeakerBeam-style TSE data"
+    bash scripts/prepare_speakerbeam_librimix.sh \
+        "$data_dir/Libri2Mix/LibriMixData/Libri2Mix" \
+        "$data_dir/Libri2Mix/SpeakerBeamData" \
+        "$PYTHON_BIN" \
+        "16k" \
+        "min" \
+        "mix_both"
+fi
+
+if [[ $stage -le 2 && $stop_stage -ge 2 ]]; then
+    export PYTHONPATH="$PWD/solospeech/stable_audio_vae:${PYTHONPATH:-}"
+    explog="$log_dir/train.vae.log"
+    if [[ -f "$explog" ]]; then
+        echo "Log file $explog already exists. Please remove it before running the script."
+        exit 1
+    fi
+    echo "Stage 2: running VAE training with config: $config
+    Logging to: $explog"
+    "$cmd" "${scheduler_arguments[@]}" "$explog" \
+        "$PYTHON_BIN" scripts/train/vae.py \
+        --config-name="${config}" \
+        save_dir="${save_dir}/compressor" \
+        data_dir="${data_dir}"
+fi
