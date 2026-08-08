@@ -13,7 +13,7 @@ if [[ "${HOSTNAME:-}" == asp2a* ]]; then
     data_dir="$HOME/scratch/train"
 
     qos="normal"
-    project="personal-n2602009"; name="SoloSpeech"; n_nodes=1; n_cpus=10; n_gpus=1; time=48:00:00; mem=64G
+    project="personal-n2602009"; name="SoloSpeech"; n_nodes=1; n_cpus=10; n_gpus=1; time=15:00:00; mem=64G
 
     scheduler_arguments=(
         -P ${project}
@@ -26,11 +26,15 @@ if [[ "${HOSTNAME:-}" == asp2a* ]]; then
     )
 fi
 
-stage=3
-stop_stage=3
+stage=0 # Download and prepare Libri2Mix data
+stage=1 # Prepare SpeakerBeam-style TSE data
+stage=2 # Train VAE on Libri2Mix data
+# stage=3 # Extract VAE embeddings for Libri2Mix data
 
-config=pretrained
-# config=SoloSpeech
+stop_stage=$stage
+
+# config=pretrained
+config=SoloSpeech
 
 save_dir="experiments/${config}"
 log_dir="$save_dir/logs"
