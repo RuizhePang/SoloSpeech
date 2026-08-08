@@ -1,6 +1,6 @@
 model_type: stft_autoencoder
 
-sample_size: 31680
+sample_size: 25344
 sample_rate: 16000
 audio_channels: 1
 
@@ -10,9 +10,9 @@ model:
     config:
       in_channels: 1
       latent_dim: 256
-      n_fft: 640
-      hop_length : 320
-      win_length: 640
+      n_fft: 512
+      hop_length : 256
+      win_length: 512
       hidden_channels: 256
       n_head: 4
       approx_qk_dim: 512
@@ -26,9 +26,9 @@ model:
     config:
       out_channels: 1
       latent_dim: 128
-      n_fft: 640
-      hop_length : 320
-      win_length: 640
+      n_fft: 512
+      hop_length : 256
+      win_length: 512
       hidden_channels: 256
       n_head: 4
       approx_qk_dim: 512
@@ -41,7 +41,7 @@ model:
     type: vae
 
   latent_dim: 128 
-  downsampling_ratio: 320
+  downsampling_ratio: 256
   io_channels: 1
 
 training:

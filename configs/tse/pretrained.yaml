@@ -1,5 +1,5 @@
 defaults:
-  - vae: stftvae_16k_320x
+  - vae: stftvae_16k
   - _self_
 
 save_dir: null
