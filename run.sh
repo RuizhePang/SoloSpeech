@@ -25,8 +25,8 @@ if [[ "${HOSTNAME:-}" == asp2a* ]]; then
     )
 fi
 
-stage=0
-stop_stage=100
+stage=1
+stop_stage=1
 
 config=SoloSpeech
 
