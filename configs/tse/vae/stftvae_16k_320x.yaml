@@ -142,7 +142,7 @@ dataset:
       path: Libri2Mix/LibriMixData/Libri2Mix/wav16k/min/train-100
     
 checkpoint:
-  ckpt_dir: ckpts/compressor
+  ckpt_dir: ckpts
   ckpt_path: null
   pretrained_ckpt_path: null
   pretransform_ckpt_path: null

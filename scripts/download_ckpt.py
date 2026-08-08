@@ -7,7 +7,7 @@ local_dir = snapshot_download(
 )
 
 src_dir = Path(local_dir).resolve()
-dst_root = Path("../experiments/pretrained/ckpts").resolve()
+dst_root = Path("../experiments/pretrained").resolve()
 
 dst_root.mkdir(parents=True, exist_ok=True)
 
@@ -18,13 +18,12 @@ for src in src_dir.glob("*"):
     name = src.name.lower()
 
     if "compressor" in name:
-        dst_dir = dst_root / "compressor"
+        dst_dir = dst_root / "compressor" / "ckpts"
     elif "extractor" in name:
-        dst_dir = dst_root / "extractor"
+        dst_dir = dst_root / "extractor" / "ckpts"
     elif "corrector" in name:
-        dst_dir = dst_root / "corrector"
+        dst_dir = dst_root / "corrector" / "ckpts"
     else:
-        # 不属于这三类的文件直接跳过
         continue
 
     dst_dir.mkdir(parents=True, exist_ok=True)
