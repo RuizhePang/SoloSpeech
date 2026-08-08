@@ -62,7 +62,6 @@ training:
   accum_batches: 1
   gradient_clip_val: 0.0
 
-  checkpoint_every: 10000
   max_steps: 1000000
 
   optimizer_configs:

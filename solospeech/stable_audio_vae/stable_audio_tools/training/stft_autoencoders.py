@@ -206,6 +206,14 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         self.latent_mask_ratio = latent_mask_ratio
 
+        self._last_gen_log = None
+        self._last_disc_log = None
+
+        self._epoch_log_sums = {}
+        self._epoch_log_counts = {}
+
+        self._log_pair_idx = 0
+
     def configure_optimizers(self):
 
         opt_gen = create_optimizer_from_config(self.optimizer_configs['autoencoder']['optimizer'], self.autoencoder.parameters())
@@ -309,6 +317,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         # Train the discriminator
         if self.global_step % 2 and self.warmed_up:
+            is_discriminator_step = True
             loss, losses = self.losses_disc(loss_info)
 
             log_dict = {
@@ -325,7 +334,7 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
 
         # Train the generator 
         else:
-
+            is_discriminator_step = False
             loss, losses = self.losses_gen(loss_info)
 
             if self.use_ema:
@@ -349,12 +358,87 @@ class AutoencoderTrainingWrapper(pl.LightningModule):
         for loss_name, loss_value in losses.items():
             log_dict[f'train/{loss_name}'] = loss_value.detach()
 
-        self.log_dict(log_dict, prog_bar=True, on_step=True)
-        logger_str = f"Step {self.global_step}: "
-        logger_str += ", ".join([f"{k}: {v:.6f}" for k, v in log_dict.items()])
-        logger.info(logger_str)
+        self.log_dict(log_dict, prog_bar=False, on_step=True, on_epoch=False)
+
+        for key, value in log_dict.items():
+            if torch.is_tensor(value):
+                value = value.detach().float().item()
+            else:
+                value = float(value)
+
+            self._epoch_log_sums[key] = self._epoch_log_sums.get(key, 0.0) + value
+            self._epoch_log_counts[key] = self._epoch_log_counts.get(key, 0) + 1
+
+        if is_discriminator_step:
+            self._last_disc_log = {
+                k: float(v.detach().item()) if torch.is_tensor(v) else float(v)
+                for k, v in log_dict.items()
+            }
+        else:
+            self._last_gen_log = {
+                k: float(v.detach().item()) if torch.is_tensor(v) else float(v)
+                for k, v in log_dict.items()
+            }
+
+        if self.current_epoch == 0 and self._last_gen_log is not None and self._last_disc_log is not None:
+            combined_log = {
+                **self._last_gen_log,
+                **self._last_disc_log,
+            }
+
+            items = []
+            for key, value in combined_log.items():
+                if "lr" in key:
+                    items.append(f"{key}: {value:.3e}")
+                else:
+                    items.append(f"{key}: {value:.6f}")
+
+            logger.info(
+                f"Step {self._log_pair_idx}: "
+                + ", ".join(items)
+            )
+
+            self._log_pair_idx += 1
+
+            # Important: clear both so that each G/D step is used once
+            self._last_gen_log = None
+            self._last_disc_log = None
 
         return loss
+    
+    def on_train_epoch_end(self):
+        if not self._epoch_log_sums:
+            return
+        avg_log = {}
+        for key, total in self._epoch_log_sums.items():
+            if "lr" in key:
+                continue
+            count = self._epoch_log_counts[key]
+            if count > 0:
+                avg_log[key] = total / count
+
+        items = []
+        for key, value in avg_log.items():
+            if "lr" in key:
+                items.append(f"{key}: {value:.3e}")
+            else:
+                items.append(f"{key}: {value:.6f}")
+        logger.info(
+            f"Epoch {self.current_epoch}: "
+            + ", ".join(items)
+        )
+
+        for key, value in avg_log.items():
+            epoch_key = key.replace("train/", "epoch/")
+            self.log(epoch_key, value, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+
+        self._epoch_log_sums.clear()
+        self._epoch_log_counts.clear()
+
+        self._last_gen_log = None
+        self._last_disc_log = None
+
+        self._log_pair_idx = 0
     
     def export_model(self, path, use_safetensors=False):
         if self.autoencoder_ema is not None:

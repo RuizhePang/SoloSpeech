@@ -138,9 +138,14 @@ def main(cfg: DictConfig):
         ckpt_dir = None
 
     ckpt_callback = pl.callbacks.ModelCheckpoint(
-        every_n_train_steps=vae_cfg.training.checkpoint_every,
         dirpath=ckpt_dir,
-        save_top_k=-1,
+        every_n_epochs=1,
+        save_on_train_epoch_end=True,
+        monitor="epoch/mrstft_loss",
+        mode="min",
+        save_top_k=1,
+        filename="compressor",
+        auto_insert_metric_name=False,
         save_last=True,
     )
 
