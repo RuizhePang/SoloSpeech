@@ -13,8 +13,7 @@ if [[ "${HOSTNAME:-}" == asp2a* ]]; then
     data_dir="$HOME/scratch/train"
 
     qos="normal"
-    qos="gdev"
-    project="personal-n2602009"; name="SoloSpeech"; n_nodes=1; n_cpus=10; n_gpus=1; time=12:00:00; mem=64G
+    project="personal-n2602009"; name="SoloSpeech"; n_nodes=1; n_cpus=10; n_gpus=1; time=48:00:00; mem=64G
 
     scheduler_arguments=(
         -P ${project}
