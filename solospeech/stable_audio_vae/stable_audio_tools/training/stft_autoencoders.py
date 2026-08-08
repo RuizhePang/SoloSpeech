@@ -527,7 +527,8 @@ class AutoencoderDemoCallback(pl.Callback):
             filename = f'recon_{step:08}.wav'
             reals_fakes_int16 = reals_fakes_float.mul(32767).to(torch.int16)
             # torchaudio.save(filename, reals_fakes_int16, self.sample_rate)
-            save_path = os.path.join(self.save_dir, "demo",filename) if self.save_dir is not None else filename
+            save_path = os.path.join(self.save_dir, "demo", filename) if self.save_dir is not None else filename
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
             torchaudio.save(save_path, reals_fakes_int16, self.sample_rate)
 
             # TensorBoard add_audio expects [channels, samples]
