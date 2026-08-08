@@ -5,12 +5,43 @@
 # https://github.com/BUTSpeechFIT/speakerbeam/blob/main/egs/libri2mix/local/create_local_metadata.py
 
 import argparse
+import csv
 import os
-import shutil
 from glob import glob
 
 
+def normalize_librimix_path(path, librimix_dir):
+    """Rewrite stale absolute Libri2Mix paths to the current Libri2Mix root."""
+    if not path:
+        return path
+
+    parts = path.split(os.sep)
+    for idx, part in enumerate(parts):
+        if part.startswith("wav") and idx + 2 < len(parts):
+            return os.path.join(librimix_dir, *parts[idx:])
+
+    marker = f"{os.sep}Libri2Mix{os.sep}"
+    if marker in path:
+        return os.path.join(librimix_dir, path.split(marker, 1)[1])
+
+    return path
+
+
+def copy_metadata_with_current_paths(src_csv, dst_csv, librimix_dir):
+    with open(src_csv, newline="") as src, open(dst_csv, "w", newline="") as dst:
+        reader = csv.DictReader(src)
+        writer = csv.DictWriter(dst, fieldnames=reader.fieldnames)
+        writer.writeheader()
+
+        for row in reader:
+            for field in reader.fieldnames:
+                if field.endswith("_path"):
+                    row[field] = normalize_librimix_path(row[field], librimix_dir)
+            writer.writerow(row)
+
+
 def create_local_metadata(librimix_dir, out_dir):
+    librimix_dir = os.path.abspath(librimix_dir)
     md_dirs = [
         path
         for path in glob(os.path.join(librimix_dir, "*/*/*"))
@@ -26,7 +57,11 @@ def create_local_metadata(librimix_dir, out_dir):
                 rel_parts = rel_parts[:-1]
             local_path = os.path.join(out_dir, *rel_parts, subset)
             os.makedirs(local_path, exist_ok=True)
-            shutil.copy(os.path.join(md_dir, md_file), local_path)
+            copy_metadata_with_current_paths(
+                os.path.join(md_dir, md_file),
+                os.path.join(local_path, md_file),
+                librimix_dir,
+            )
 
 
 def main():
