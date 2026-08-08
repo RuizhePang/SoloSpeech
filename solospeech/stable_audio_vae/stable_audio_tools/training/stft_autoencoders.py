@@ -458,7 +458,8 @@ class AutoencoderDemoCallback(pl.Callback):
         demo_dl, 
         demo_every=2000,
         sample_size=65536,
-        sample_rate=48000
+        sample_rate=48000,
+        save_dir=None,
     ):
         super().__init__()
         self.demo_every = demo_every
@@ -466,6 +467,7 @@ class AutoencoderDemoCallback(pl.Callback):
         self.demo_dl = iter(demo_dl)
         self.sample_rate = sample_rate
         self.last_demo_step = -1
+        self.save_dir = save_dir
 
     @rank_zero_only
     @torch.no_grad()
@@ -523,7 +525,9 @@ class AutoencoderDemoCallback(pl.Callback):
             # Save wav separately if you still want reconstructed wav files
             filename = f'recon_{step:08}.wav'
             reals_fakes_int16 = reals_fakes_float.mul(32767).to(torch.int16)
-            torchaudio.save(filename, reals_fakes_int16, self.sample_rate)
+            # torchaudio.save(filename, reals_fakes_int16, self.sample_rate)
+            save_path = os.path.join(self.save_dir, "demo",filename) if self.save_dir is not None else filename
+            torchaudio.save(save_path, reals_fakes_int16, self.sample_rate)
 
             # TensorBoard add_audio expects [channels, samples]
             writer.add_audio(

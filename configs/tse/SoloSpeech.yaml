@@ -4,3 +4,7 @@ defaults:
 
 save_dir: null
 data_dir: null
+
+hydra:
+  run:
+    dir: .

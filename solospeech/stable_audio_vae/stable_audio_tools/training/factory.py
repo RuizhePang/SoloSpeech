@@ -215,6 +215,7 @@ def create_demo_callback_from_config(model_config, **kwargs):
             demo_every=demo_config.get("demo_every", 2000), 
             sample_size=model_config["sample_size"], 
             sample_rate=model_config["sample_rate"],
+            save_dir=model_config.get("save_dir", "./"),
             **kwargs
         )
     elif model_type == 'stft_autoencoder':
@@ -223,6 +224,7 @@ def create_demo_callback_from_config(model_config, **kwargs):
             demo_every=demo_config.get("demo_every", 2000), 
             sample_size=model_config["sample_size"], 
             sample_rate=model_config["sample_rate"],
+            save_dir=model_config.get("save_dir", "./"),
             **kwargs
         )
     elif model_type == 'diffusion_uncond':
@@ -230,7 +232,8 @@ def create_demo_callback_from_config(model_config, **kwargs):
         return DiffusionUncondDemoCallback(
             demo_every=demo_config.get("demo_every", 2000), 
             demo_steps=demo_config.get("demo_steps", 250), 
-            sample_rate=model_config["sample_rate"]
+            sample_rate=model_config["sample_rate"],
+            save_dir=model_config.get("save_dir", "./"),
         )
     elif model_type == "diffusion_autoencoder":
         from .diffusion import DiffusionAutoencoderDemoCallback
@@ -239,6 +242,7 @@ def create_demo_callback_from_config(model_config, **kwargs):
             demo_steps=demo_config.get("demo_steps", 250),
             sample_size=model_config["sample_size"],
             sample_rate=model_config["sample_rate"],
+            save_dir=model_config.get("save_dir", "./"),
             **kwargs
         )
     elif model_type == "diffusion_prior":
@@ -248,6 +252,7 @@ def create_demo_callback_from_config(model_config, **kwargs):
             demo_steps=demo_config.get("demo_steps", 250),
             sample_size=model_config["sample_size"],
             sample_rate=model_config["sample_rate"],
+            save_dir=model_config.get("save_dir", "./"),
             **kwargs
         )
     elif model_type == "diffusion_cond":
@@ -263,6 +268,7 @@ def create_demo_callback_from_config(model_config, **kwargs):
             demo_conditioning=demo_config.get("demo_cond", {}),
             demo_cond_from_batch=demo_config.get("demo_cond_from_batch", False),
             display_audio_cond=demo_config.get("display_audio_cond", False),
+            save_dir=model_config.get("save_dir", "./"),
         )
     elif model_type == "diffusion_cond_inpaint":
         from .diffusion import DiffusionCondInpaintDemoCallback
@@ -273,6 +279,7 @@ def create_demo_callback_from_config(model_config, **kwargs):
             sample_rate=model_config["sample_rate"],
             demo_steps=demo_config.get("demo_steps", 250),
             demo_cfg_scales=demo_config["demo_cfg_scales"],
+            save_dir=model_config.get("save_dir", "./"),
             **kwargs
         )
     
@@ -286,6 +293,7 @@ def create_demo_callback_from_config(model_config, **kwargs):
             demo_cfg_scales=demo_config.get("demo_cfg_scales", [1]),
             demo_conditioning=demo_config.get("demo_cond", None),
             num_demos=demo_config.get("num_demos", 8),
+            save_dir=model_config.get("save_dir", "./"),
             **kwargs
         )
     else:

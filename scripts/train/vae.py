@@ -127,6 +127,7 @@ def main(cfg: DictConfig):
 
     save_model_config_callback = ModelConfigEmbedderCallback(model_config)
 
+    model_config["save_dir"] = save_dir
     demo_callback = create_demo_callback_from_config(model_config, demo_dl=train_dl)
 
     # ---------------------------------------------------------
