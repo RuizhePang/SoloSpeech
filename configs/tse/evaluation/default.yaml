@@ -1,0 +1,30 @@
+metrics:
+  - system
+
+test_name: Libri2Mix
+test_dir: null
+manifest: null
+raw_dataset_name: Libri2Mix
+split: test
+
+sample_rate: 16000
+max_items: null
+overwrite: false
+whisper_model: large-v3-turbo
+
+compressor:
+  sources:
+    - s1
+    - s2
+
+extractor:
+  checkpoint_path: null
+  num_infer_steps: 50
+  eta: 0.0
+  seed: 2024
+  decode_std: mixture
+
+corrector:
+  checkpoint_path: null
+  reverse_starting_point: 0.5
+  num_steps: 1

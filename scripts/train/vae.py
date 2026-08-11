@@ -4,6 +4,7 @@ import random
 import hydra
 import torch
 import pytorch_lightning as pl
+from loguru import logger
 from pytorch_lightning.loggers import TensorBoardLogger
 
 from hydra.utils import to_absolute_path
@@ -24,7 +25,7 @@ from stable_audio_tools.training.utils import copy_state_dict
 
 class ExceptionCallback(pl.Callback):
     def on_exception(self, trainer, module, err):
-        print(f"{type(err).__name__}: {err}")
+        logger.error(f"{type(err).__name__}: {err}")
 
 
 class ModelConfigEmbedderCallback(pl.Callback):
@@ -45,16 +46,15 @@ def main(cfg: DictConfig):
     save_dir = cfg.save_dir
     data_dir = cfg.data_dir
 
-    cfg.vae.checkpoint.ckpt_dir = os.path.join(save_dir, cfg.vae.checkpoint.ckpt_dir)
-    for dataset in cfg.vae.dataset.datasets:
+    compressor_cfg = cfg.compressor
+    compressor_cfg.checkpoint.ckpt_dir = os.path.join(save_dir, compressor_cfg.checkpoint.ckpt_dir)
+    for dataset in compressor_cfg.dataset.datasets:
         dataset.path = os.path.join(data_dir, dataset.path)
-
-    vae_cfg = cfg.vae
 
     # ---------------------------------------------------------
     # Seed
     # ---------------------------------------------------------
-    seed = vae_cfg.training.seed
+    seed = compressor_cfg.training.seed
 
     # Different seed for each SLURM process
     if os.environ.get("SLURM_PROCID") is not None:
@@ -72,7 +72,7 @@ def main(cfg: DictConfig):
     # Convert Hydra DictConfig -> Python dict because
     # stable_audio_tools expects a normal config dictionary.
     #
-    model_config = OmegaConf.to_container(vae_cfg, resolve=True)
+    model_config = OmegaConf.to_container(compressor_cfg, resolve=True)
 
     # These are our Hydra/runtime-only configs.
     # stable_audio_tools does not need them.
@@ -85,11 +85,11 @@ def main(cfg: DictConfig):
     # ---------------------------------------------------------
     train_dl = create_dataloader_from_config(
         dataset_config,
-        batch_size=vae_cfg.training.batch_size,
-        num_workers=vae_cfg.training.num_workers,
-        sample_rate=vae_cfg.sample_rate,
-        sample_size=vae_cfg.sample_size,
-        audio_channels=vae_cfg.get("audio_channels", 2),
+        batch_size=compressor_cfg.training.batch_size,
+        num_workers=compressor_cfg.training.num_workers,
+        sample_rate=compressor_cfg.sample_rate,
+        sample_size=compressor_cfg.sample_size,
+        audio_channels=compressor_cfg.get("audio_channels", 2),
     )
 
     # ---------------------------------------------------------
@@ -100,19 +100,19 @@ def main(cfg: DictConfig):
     # ---------------------------------------------------------
     # Load checkpoints
     # ---------------------------------------------------------
-    if vae_cfg.checkpoint.pretrained_ckpt_path:
-        pretrained_ckpt_path = to_absolute_path(vae_cfg.checkpoint.pretrained_ckpt_path)
+    if compressor_cfg.checkpoint.pretrained_ckpt_path:
+        pretrained_ckpt_path = to_absolute_path(compressor_cfg.checkpoint.pretrained_ckpt_path)
         copy_state_dict(model, load_ckpt_state_dict(pretrained_ckpt_path))
 
-    if (vae_cfg.checkpoint.remove_pretransform_weight_norm == "pre_load"):
+    if (compressor_cfg.checkpoint.remove_pretransform_weight_norm == "pre_load"):
         remove_weight_norm_from_model(model.pretransform)
 
-    if vae_cfg.checkpoint.pretransform_ckpt_path:
-        pretransform_ckpt_path = to_absolute_path(vae_cfg.checkpoint.pretransform_ckpt_path)
+    if compressor_cfg.checkpoint.pretransform_ckpt_path:
+        pretransform_ckpt_path = to_absolute_path(compressor_cfg.checkpoint.pretransform_ckpt_path)
 
         model.pretransform.load_state_dict(load_ckpt_state_dict(pretransform_ckpt_path))
 
-    if (vae_cfg.checkpoint.remove_pretransform_weight_norm == "post_load"):
+    if (compressor_cfg.checkpoint.remove_pretransform_weight_norm == "post_load"):
         remove_weight_norm_from_model(model.pretransform)
 
     # ---------------------------------------------------------
@@ -133,8 +133,8 @@ def main(cfg: DictConfig):
     # ---------------------------------------------------------
     # Checkpoint directory
     # ---------------------------------------------------------
-    if vae_cfg.checkpoint.ckpt_dir:
-        ckpt_dir = to_absolute_path(vae_cfg.checkpoint.ckpt_dir)
+    if compressor_cfg.checkpoint.ckpt_dir:
+        ckpt_dir = to_absolute_path(compressor_cfg.checkpoint.ckpt_dir)
     else:
         ckpt_dir = None
 
@@ -153,9 +153,9 @@ def main(cfg: DictConfig):
     # ---------------------------------------------------------
     # Multi-GPU strategy
     # ---------------------------------------------------------
-    if vae_cfg.training.strategy:
+    if compressor_cfg.training.strategy:
 
-        if vae_cfg.training.strategy == "deepspeed":
+        if compressor_cfg.training.strategy == "deepspeed":
             from pytorch_lightning.strategies import DeepSpeedStrategy
 
             strategy = DeepSpeedStrategy(
@@ -169,12 +169,12 @@ def main(cfg: DictConfig):
             )
 
         else:
-            strategy = vae_cfg.training.strategy
+            strategy = compressor_cfg.training.strategy
 
     else:
         strategy = (
             "ddp_find_unused_parameters_true"
-            if vae_cfg.training.num_gpus > 1
+            if compressor_cfg.training.num_gpus > 1
             else "auto"
         )
 
@@ -183,12 +183,12 @@ def main(cfg: DictConfig):
     # ---------------------------------------------------------
     tb_logger = TensorBoardLogger(save_dir, name="tensorboard")
     trainer = pl.Trainer(
-        devices=vae_cfg.training.num_gpus,
+        devices=compressor_cfg.training.num_gpus,
         accelerator="gpu",
-        num_nodes=vae_cfg.training.num_nodes,
+        num_nodes=compressor_cfg.training.num_nodes,
         strategy=strategy,
-        precision=vae_cfg.training.precision,
-        accumulate_grad_batches=(vae_cfg.training.accum_batches),
+        precision=compressor_cfg.training.precision,
+        accumulate_grad_batches=(compressor_cfg.training.accum_batches),
         callbacks=[
             ckpt_callback,
             demo_callback,
@@ -197,9 +197,9 @@ def main(cfg: DictConfig):
         ],
         logger=tb_logger,
         log_every_n_steps=10,
-        max_steps=vae_cfg.training.max_steps,
+        max_steps=compressor_cfg.training.max_steps,
         default_root_dir=save_dir,
-        gradient_clip_val=(vae_cfg.training.gradient_clip_val),
+        gradient_clip_val=(compressor_cfg.training.gradient_clip_val),
         reload_dataloaders_every_n_epochs=0,
         enable_progress_bar=False,
     )
@@ -209,14 +209,16 @@ def main(cfg: DictConfig):
     # ---------------------------------------------------------
     ckpt_path = None
 
-    if vae_cfg.checkpoint.ckpt_path:
-        ckpt_path = to_absolute_path(vae_cfg.checkpoint.ckpt_path)
-
-    elif ckpt_dir is not None:
+    if ckpt_dir is not None:
         last_ckpt_path = os.path.join(ckpt_dir, "last.ckpt")
         if os.path.isfile(last_ckpt_path):
             ckpt_path = last_ckpt_path
-            logger.info(f"Resuming from checkpoint: {ckpt_path}")
+
+    if ckpt_path is None and compressor_cfg.checkpoint.ckpt_path:
+        ckpt_path = to_absolute_path(compressor_cfg.checkpoint.ckpt_path)
+
+    if ckpt_path:
+        logger.info(f"Resuming from checkpoint: {ckpt_path}")
 
     # ---------------------------------------------------------
     # Train

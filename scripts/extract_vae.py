@@ -11,6 +11,11 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
+
+def get_compressor_name():
+    return HydraConfig.get().runtime.choices["compressor"]
+
+
 def load_autoencoder(config, ckpt_path):
     model_type = config.get("model_type")
     if model_type in ("stft_vae", "stft_autoencoder"):
@@ -107,34 +112,40 @@ def print_stats(stats):
     config_name="SoloSpeech",
 )
 def main(cfg: DictConfig):
-    vae_name = HydraConfig.get().runtime.choices["vae"]
+    compressor_name = get_compressor_name()
+    compressor_cfg = cfg.compressor
 
     relative_root = (Path(cfg.data_dir) / "Libri2Mix" / "LibriMixData").resolve()
     input_root = (relative_root / "Libri2Mix" / "wav16k").resolve()
-    output_root = (Path(cfg.data_dir) / "Libri2Mix" / vae_name).resolve()
-    vae_ckpt_path = (
-        Path(cfg.save_dir) / cfg.vae.checkpoint.ckpt_dir / "compressor.ckpt"
+    output_root = (
+        Path(cfg.data_dir)
+        / "Libri2Mix"
+        / "compressor"
+        / compressor_name
+    ).resolve()
+    compressor_ckpt_path = (
+        Path(cfg.save_dir) / compressor_cfg.checkpoint.ckpt_dir / "compressor.ckpt"
     ).resolve()
 
     if not input_root.is_dir():
         raise FileNotFoundError(f"Missing input root: {input_root}")
-    if not vae_ckpt_path.is_file():
-        raise FileNotFoundError(f"Missing VAE checkpoint: {vae_ckpt_path}")
+    if not compressor_ckpt_path.is_file():
+        raise FileNotFoundError(f"Missing compressor checkpoint: {compressor_ckpt_path}")
 
-    vae_config = OmegaConf.to_container(cfg.vae, resolve=True)
-    sample_rate = int(vae_config["sample_rate"])
-    model_type = vae_config["model_type"]
+    compressor_config = OmegaConf.to_container(compressor_cfg, resolve=True)
+    sample_rate = int(compressor_config["sample_rate"])
+    model_type = compressor_config["model_type"]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     logger.info(f"Input root: {input_root}")
     logger.info(f"Relative root: {relative_root}")
     logger.info(f"Output root: {output_root}")
-    logger.info(f"VAE config: {vae_name}")
-    logger.info(f"VAE checkpoint: {vae_ckpt_path}")
+    logger.info(f"Compressor config: {compressor_name}")
+    logger.info(f"Compressor checkpoint: {compressor_ckpt_path}")
     logger.info(f"Device: {device}")
     logger.info(f"Sample rate: {sample_rate}")
 
-    autoencoder = load_autoencoder(vae_config, vae_ckpt_path).to(device)
+    autoencoder = load_autoencoder(compressor_config, compressor_ckpt_path).to(device)
     wavs = iter_wavs(input_root)
     if not wavs:
         raise RuntimeError(f"No wav files found under {input_root}")

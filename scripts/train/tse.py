@@ -14,6 +14,12 @@ from torch.utils.data import ConcatDataset, DataLoader
 from tqdm import tqdm
 
 
+def get_compressor_name():
+    from hydra.core.hydra_config import HydraConfig
+
+    return HydraConfig.get().runtime.choices["compressor"]
+
+
 def masked_mse_loss(predictions, targets, mask=None):
     if mask is None:
         return ((predictions - targets) ** 2).mean()
@@ -35,12 +41,12 @@ def seed_everything(seed):
             torch.backends.cudnn.benchmark = False
 
 
-def make_dataset(cfg, vae_name, subset, training):
+def make_dataset(cfg, compressor_name, subset, training):
     from solospeech.dataset.tse import TSEDataset
 
     data_cfg = cfg.extractor.data
     base_dir = Path(cfg.data_dir) / "Libri2Mix" / "LibriMixData"
-    vae_dir = Path(cfg.data_dir) / "Libri2Mix" / vae_name
+    vae_dir = Path(cfg.data_dir) / "Libri2Mix" / "compressor" / compressor_name
     csv_dir = (
         Path(cfg.data_dir)
         / "Libri2Mix"
@@ -64,9 +70,9 @@ def make_dataset(cfg, vae_name, subset, training):
     )
 
 
-def make_train_loader(cfg, vae_name):
+def make_train_loader(cfg, compressor_name):
     train_sets = [
-        make_dataset(cfg, vae_name=vae_name, subset=subset, training=True)
+        make_dataset(cfg, compressor_name=compressor_name, subset=subset, training=True)
         for subset in cfg.extractor.data.train_subsets
     ]
     train_set = train_sets[0] if len(train_sets) == 1 else ConcatDataset(train_sets)
@@ -80,10 +86,10 @@ def make_train_loader(cfg, vae_name):
     )
 
 
-def make_val_loader(cfg, vae_name):
+def make_val_loader(cfg, compressor_name):
     val_set = make_dataset(
         cfg,
-        vae_name=vae_name,
+        compressor_name=compressor_name,
         subset=cfg.extractor.data.val_subset,
         training=False,
     )
@@ -138,14 +144,16 @@ def load_autoencoder(config, ckpt_path):
     return model.eval()
 
 
-def resolve_vae_ckpt_path(cfg):
-    if cfg.vae.checkpoint.ckpt_path:
-        return Path(cfg.vae.checkpoint.ckpt_path).resolve()
+def resolve_compressor_ckpt_path(cfg):
+    compressor_cfg = cfg.compressor
+    if compressor_cfg.checkpoint.ckpt_path:
+        return Path(compressor_cfg.checkpoint.ckpt_path).resolve()
 
     extractor_dir = Path(cfg.save_dir)
     experiment_dir = extractor_dir.parent
     candidates = [
-        experiment_dir / "compressor" / cfg.vae.checkpoint.ckpt_dir / "compressor.ckpt",
+        experiment_dir / "compressor" / compressor_cfg.checkpoint.ckpt_dir / "compressor.ckpt",
+        experiment_dir / "compressor" / compressor_cfg.checkpoint.ckpt_dir / "last.ckpt",
         experiment_dir / "compressor" / "compressor.ckpt",
     ]
     for candidate in candidates:
@@ -163,6 +171,15 @@ def make_optimizer(model, cfg):
         weight_decay=opt_cfg.weight_decay,
         eps=opt_cfg.adam_epsilon,
     )
+
+
+def resolve_resume_path(ckpt_dir, resume_from):
+    last_ckpt = Path(ckpt_dir) / "last.ckpt"
+    if last_ckpt.is_file():
+        return last_ckpt
+    if resume_from and Path(resume_from).is_file():
+        return Path(resume_from)
+    return None
 
 
 def train_step(model, batch, noise_scheduler, accelerator, v_prediction):
@@ -240,7 +257,7 @@ def run_audio_demo(model, autoencoder, scheduler, demo_loader, cfg, accelerator,
     demo_root = Path(cfg.save_dir) / "demo" / f"epoch_{epoch}"
     sample_rate = cfg.extractor.data.sample_rate
     hop = cfg.extractor.data.sample_rate // cfg.extractor.data.vae_rate
-    vae_model_type = cfg.vae.model_type
+    compressor_model_type = cfg.compressor.model_type
 
     for batch_idx, batch in enumerate(tqdm(demo_loader, disable=not accelerator.is_main_process, desc="Demo")):
         if batch_idx >= demo_cfg.max_batches:
@@ -271,10 +288,10 @@ def run_audio_demo(model, autoencoder, scheduler, demo_loader, cfg, accelerator,
             ).prev_sample
 
         source_std = batch["source_std"]
-        if source_std is None and vae_model_type in ("stft_vae", "stft_autoencoder"):
+        if source_std is None and compressor_model_type in ("stft_vae", "stft_autoencoder"):
             raise RuntimeError("Audio demo requires std saved by stage3. Rerun stage3 to regenerate VAE .pt files.")
 
-        if vae_model_type in ("stft_vae", "stft_autoencoder"):
+        if compressor_model_type in ("stft_vae", "stft_autoencoder"):
             pred_wav = autoencoder.decode(pred.transpose(2, 1), source_std.to(accelerator.device).transpose(2, 1))
         else:
             pred_wav = autoencoder.decode(pred.transpose(2, 1))
@@ -302,11 +319,10 @@ def run_audio_demo(model, autoencoder, scheduler, demo_loader, cfg, accelerator,
     config_name="SoloSpeech",
 )
 def main(cfg: DictConfig):
-    from hydra.core.hydra_config import HydraConfig
     from accelerate import Accelerator
     from diffusers import DDIMScheduler
 
-    vae_name = HydraConfig.get().runtime.choices["vae"]
+    compressor_name = get_compressor_name()
     train_cfg = cfg.extractor.training
     save_dir = Path(cfg.save_dir)
     ckpt_dir = save_dir / "ckpts"
@@ -320,29 +336,31 @@ def main(cfg: DictConfig):
     accelerator = Accelerator(mixed_precision=train_cfg.amp)
     model = make_model(cfg)
     optimizer = make_optimizer(model, cfg)
-    train_loader = make_train_loader(cfg, vae_name)
-    val_loader = make_val_loader(cfg, vae_name)
+    train_loader = make_train_loader(cfg, compressor_name)
+    val_loader = make_val_loader(cfg, compressor_name)
     noise_scheduler = DDIMScheduler(**OmegaConf.to_container(cfg.extractor.ddim.diffusers, resolve=True))
     demo_scheduler = DDIMScheduler(**OmegaConf.to_container(cfg.extractor.ddim.diffusers, resolve=True))
-    vae_config = OmegaConf.to_container(cfg.vae, resolve=True)
-    autoencoder = load_autoencoder(vae_config, resolve_vae_ckpt_path(cfg))
+    compressor_config = OmegaConf.to_container(cfg.compressor, resolve=True)
+    autoencoder = load_autoencoder(compressor_config, resolve_compressor_ckpt_path(cfg))
 
     total = sum(param.nelement() for param in model.parameters())
     if accelerator.is_main_process:
         logger.info(f"Number of parameter: {total / 1e6:.2f}M")
 
-    resume_from = train_cfg.resume_from
-    if resume_from and os.path.exists(resume_from):
-        checkpoint = torch.load(resume_from, map_location="cpu")
+    resume_path = resolve_resume_path(ckpt_dir, train_cfg.resume_from)
+    if resume_path:
+        checkpoint = torch.load(resume_path, map_location="cpu")
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         global_step = checkpoint["global_step"]
         start_epoch = checkpoint["epoch"] + 1
+        best_val_loss = checkpoint.get("best_val_loss", float("inf"))
         if accelerator.is_main_process:
-            logger.info(f"Resuming from checkpoint: {resume_from}, starting from epoch {start_epoch}.")
+            logger.info(f"Resuming from checkpoint: {resume_path}, starting from epoch {start_epoch}.")
     else:
         global_step = 0
         start_epoch = 0
+        best_val_loss = float("inf")
 
     model, optimizer, train_loader, val_loader, autoencoder = accelerator.prepare(
         model, optimizer, train_loader, val_loader, autoencoder
@@ -353,6 +371,7 @@ def main(cfg: DictConfig):
 
     for epoch in range(start_epoch, train_cfg.epochs):
         model.train()
+        val_loss = None
         for step, batch in enumerate(tqdm(train_loader, disable=not accelerator.is_main_process, desc=f"Epoch {epoch + 1}")):
             loss = train_step(model, batch, noise_scheduler, accelerator, v_prediction)
 
@@ -403,17 +422,25 @@ def main(cfg: DictConfig):
             )
 
         accelerator.wait_for_everyone()
-        if accelerator.is_main_process and (epoch + 1) % train_cfg.save_every == 0:
+        save_last = (epoch + 1) % train_cfg.save_every == 0
+        save_best = accelerator.is_main_process and val_loss is not None and val_loss < best_val_loss
+        if save_best:
+            best_val_loss = val_loss
+
+        if accelerator.is_main_process and (save_last or save_best):
             unwrapped_model = accelerator.unwrap_model(model)
-            accelerator.save(
-                {
-                    "model": unwrapped_model.state_dict(),
-                    "optimizer": optimizer.state_dict(),
-                    "epoch": epoch,
-                    "global_step": global_step,
-                },
-                ckpt_dir / f"{epoch}.pt",
-            )
+            checkpoint = {
+                "model": unwrapped_model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "epoch": epoch,
+                "global_step": global_step,
+                "best_val_loss": best_val_loss,
+            }
+            if save_best:
+                accelerator.save(checkpoint, ckpt_dir / "extractor.pt")
+                logger.info(f"Saved best extractor checkpoint: {ckpt_dir / 'extractor.pt'}")
+            if save_last:
+                accelerator.save(checkpoint, ckpt_dir / "last.ckpt")
         accelerator.wait_for_everyone()
 
 

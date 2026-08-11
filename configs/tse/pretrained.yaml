@@ -1,6 +1,8 @@
 defaults:
-  - vae: stftvae_16k
-  - extractor: SoloSpeech-tse-base
+  - compressor: stftvae_16k
+  - extractor: baseline
+  - corrector: fastgeco
+  - evaluation: default
   - _self_
 
 save_dir: null

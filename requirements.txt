@@ -13,6 +13,11 @@ tornado==6.4.2
 tqdm==4.63.0
 matplotlib==3.7.5
 pesq==0.0.4
+loguru>=0.7.0
+jiwer>=3.0.0
+onnxruntime>=1.16.0
+openai-whisper>=20231117
+pystoi>=0.4.1
 wandb==0.19.1
 pandas==2.0.3
 soundfile>=0.10.3.post1

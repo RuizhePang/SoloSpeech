@@ -1,0 +1,109 @@
+system: fastgeco
+
+data:
+  train_dir: null
+  val_dir: null
+  test_dir: null
+  format: default
+  sampling_rate: 16000
+  batch_size: 16
+  num_workers: 4
+  n_fft: 510
+  hop_length: 128
+  num_frames: 256
+  window: hann
+  dummy: false
+  spec_factor: 0.15
+  spec_abs_exponent: 0.5
+  normalize: mix
+  transform_type: exponent
+  max_masking: 0.2
+
+generation:
+  sample_rate_dir: wav16k
+  mix_mode: min
+  subsets:
+    train:
+      - train-100
+      - train-360
+    dev:
+      - dev
+    test:
+      - test
+  batch_size: 1
+  num_workers: 4
+  num_infer_steps: 50
+  eta: 0.0
+  seed: 2025
+  decode_std: mixture
+  skip_existing: true
+  debug: false
+  extractor_ckpt_path: null
+  compressor_ckpt_path: null
+
+model:
+  backbone: ncsnpp
+  sde: bbed
+  ema_decay: 0.999
+  t_eps: 0.03
+  loss_abs_exponent: 0.5
+  output_scale: time
+  num_eval_files: 20
+
+backbone:
+  scale_by_sigma: true
+  nonlinearity: swish
+  nf: 128
+  ch_mult: [1, 1, 2, 2, 2, 2, 2]
+  num_res_blocks: 2
+  attn_resolutions: [16]
+  resamp_with_conv: true
+  conditional: true
+  fir: true
+  fir_kernel: song
+  skip_rescale: true
+  resblock_type: biggan
+  progressive: output_skip
+  progressive_input: input_skip
+  progressive_combine: sum
+  init_scale: 0.0
+  fourier_scale: 16
+  image_size: 256
+  embedding_type: fourier
+  dropout: 0.0
+
+sde:
+  T_sampling: 0.999
+  k: 2.6
+  theta: 0.52
+  N: 1000
+
+training:
+  seed: 2025
+  num_gpus: 1
+  num_nodes: 1
+  strategy: ddp
+  precision: 32
+  max_epochs: 200
+  max_steps: -1
+  log_every_n_steps: 10
+  num_sanity_val_steps: 1
+  gradient_clip_val: 0.0
+  N_min: 1
+  N_max: 1
+  t_rsp_min: 0.5
+  t_rsp_max: 0.5
+  loss_type: default
+  stop_iteration_random: last
+  inference_N: 1
+  inference_start: 0.5
+  resume_from: null
+
+optimization:
+  learning_rate: 1e-5
+
+checkpoint:
+  ckpt_dir: ckpts
+  monitor: si_sdr
+  mode: max
+  filename: corrector
