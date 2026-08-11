@@ -13,10 +13,8 @@ setup(
         'torch==2.4.1',
         'torchaudio==2.4.1',
         'torchvision==0.19.1',
-        'wandb==0.19.1',
         'diffusers==0.30',
         'librosa==0.9.2',
-        'speechbrain==1.0.2',
         'python_speech_features==0.6'
     ],
     author='Helin Wang',

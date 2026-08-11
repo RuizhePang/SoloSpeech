@@ -1,25 +1,21 @@
 # Quick Use
 
-We release our best models for target speech extraction. This page provides a quick-start guide for using them.
-
-
-## Install
-
-For Linux developers and researchers, run:
+This repository is driven by `run.sh`. Set the stage range and optional overrides on the command line.
 
 ```bash
-conda create -n solospeech python=3.8.19
-conda activate solospeech
-git clone https://github.com/WangHelin1997/SoloSpeech
-cd SoloSpeech/
-pip install -r requirements.txt
-pip install .
+./run.sh --stage 0 --stop-stage 1
 ```
 
-## Target Speech Extraction
+For a small Libri2Mix download during local testing, adjust:
 
-This is an example to run SoloSpeech:
 ```bash
-python scripts/test_v2.py --test-wav "./assets/test2.wav" --enroll-wav "./assets/test2_enroll.wav" --output-path "./demo/test2_solospeech.wav"
+./run.sh --stage 0 --stop-stage 0 --librimix_sample_ratio 1/1000
 ```
-Here, `--test-wav` is the path of the mixture audio, `--enroll-wav` is the path of the enrollment audio (representing the speaker you want to extract), and `--output-path` is the path to save output audio.
+
+Evaluation can run from a manifest of raw audio without precomputed compressor or extractor outputs:
+
+```bash
+./run.sh --stage 7 --stop-stage 7 \
+  --test_dir /path/to/testset \
+  --test_manifest /path/to/manifest.csv
+```

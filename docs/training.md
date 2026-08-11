@@ -1,45 +1,13 @@
 # Training
 
-
-## Audio Compressor Training
-
-To train a T-F Audio VAE model, please:
-
-1. Change data path in `capspeech/stable_audio_vae/configs/vae_data.txt` (any folder contains audio files).
-
-2. Change model config in `capspeech/stable_audio_vae/configs/stftvae_16k_320x.config`. 
-
-We provide config for training audio files of 16k sampling rate,  please change the settings when you want other sampling rates.
-
-3. Change batch size and training settings in `capspeech/stable_audio_vae/defaults.ini`.
-
-4. Run:
+The main training stages are in `run.sh`.
 
 ```bash
-cd capspeech/stable_audio_vae/
-bash train_bash.sh
-``` 
-
-## Target Extractor Training
-
-To train a targer extractor, please:
-
-1. Prepare audio files following [SpeakerBeam](https://github.com/BUTSpeechFIT/speakerbeam).
-
-2. Prepare latent features:
-
-```bash
-python capspeech/dataset/extract_vae.py
+./run.sh --stage 2 --stop-stage 2  # compressor / VAE
+./run.sh --stage 3 --stop-stage 3  # encode Libri2Mix with compressor
+./run.sh --stage 4 --stop-stage 4  # extractor
+./run.sh --stage 5 --stop-stage 5  # generate corrector data
+./run.sh --stage 6 --stop-stage 6  # corrector
 ```
 
-3. Training:
-```bash
-accelerate launch capspeech/scripts/solospeech/train-tse.py
-```
-
-## Corrector Training
-
-To train a corrector, please run:
-```bash
-CUDA_VISIBLE_DEVICES=0 python capspeech/corrector/train-fastgeco.py --gpus 1 --batch_size 16
-```
+The default experiment config is `configs/tse/SoloSpeech.yaml`. Use `--config pretrained` or another Hydra config name to switch the full pipeline config.

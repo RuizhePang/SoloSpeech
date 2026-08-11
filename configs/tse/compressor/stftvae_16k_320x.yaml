@@ -147,6 +147,3 @@ checkpoint:
   pretrained_ckpt_path: null
   pretransform_ckpt_path: null
   remove_pretransform_weight_norm: null
-
-wandb:
-  project: stftvae

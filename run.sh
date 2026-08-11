@@ -95,7 +95,7 @@ if [[ $stage -le 2 && $stop_stage -ge 2 ]]; then
     echo "Stage 2: running VAE training with config: $config
     Logging to: $explog"
     "$cmd" "${scheduler_arguments[@]}" "$explog" \
-        "$PYTHON_BIN" scripts/train/vae.py \
+        "$PYTHON_BIN" scripts/train/compressor.py \
         --config-name="${config}" \
         save_dir="${save_dir}/compressor" \
         data_dir="${data_dir}"
@@ -128,7 +128,7 @@ if [[ $stage -le 4 && $stop_stage -ge 4 ]]; then
     echo "Stage 4: running TSE extractor training with config: $config
     Logging to: $explog"
     "$cmd" "${scheduler_arguments[@]}" "$explog" \
-        "$PYTHON_BIN" scripts/train/tse.py \
+        "$PYTHON_BIN" scripts/train/extractor.py \
         --config-name="${config}" \
         save_dir="${save_dir}/extractor" \
         data_dir="${data_dir}"
