@@ -3,8 +3,8 @@
 set -euo pipefail
 
 if [[ $# -lt 2 ]]; then
-    echo "Usage: $0 <librimix_root> <python_bin> [freqs] [modes] [types]" >&2
-    echo "Example: $0 data/train/Libri2Mix python '16k' 'min' 'mix_clean mix_both'" >&2
+    echo "Usage: $0 <librimix_root> <python_bin> [freqs] [modes] [types] [sample_ratio]" >&2
+    echo "Example: $0 data/train/Libri2Mix python '16k' 'min' 'mix_clean mix_both' '1/1000'" >&2
     exit 1
 fi
 
@@ -13,10 +13,12 @@ python_bin=$2
 freqs=${3:-"16k"}
 modes=${4:-"min"}
 types=${5:-"mix_clean mix_both"}
+sample_ratio=${6:-"1"}
 
 librimix_repo_url=${LIBRIMIX_REPO_URL:-"https://github.com/JorisCos/LibriMix.git"}
 librimix_repo_dir=${LIBRIMIX_REPO_DIR:-"${librimix_root}/LibriMix"}
 librimix_storage_dir=${LIBRIMIX_STORAGE_DIR:-"${librimix_root}/LibriMixData"}
+metadata_dir="${librimix_root}/metadata/Libri2Mix.sampled"
 
 librispeech_dir="${librimix_storage_dir}/LibriSpeech"
 wham_dir="${librimix_storage_dir}/wham_noise"
@@ -72,6 +74,62 @@ ensure_librimix_repo() {
     fi
 }
 
+prepare_sampled_metadata() {
+    "${python_bin}" - \
+        "${librimix_repo_dir}/metadata/Libri2Mix" \
+        "${metadata_dir}" \
+        "${sample_ratio}" <<'PY'
+import csv
+import math
+import random
+import shutil
+import sys
+from pathlib import Path
+
+src_dir = Path(sys.argv[1])
+dst_dir = Path(sys.argv[2])
+ratio_text = sys.argv[3]
+
+def parse_ratio(text):
+    text = text.strip()
+    if "/" in text:
+        numerator, denominator = text.split("/", 1)
+        return float(numerator) / float(denominator)
+    return float(text)
+
+ratio = parse_ratio(ratio_text)
+if ratio <= 0 or ratio > 1:
+    raise SystemExit(f"sample_ratio must be in (0, 1], got: {ratio_text}")
+
+dst_dir.mkdir(parents=True, exist_ok=True)
+for old_file in dst_dir.glob("*.csv"):
+    old_file.unlink()
+
+for src_file in sorted(src_dir.glob("*.csv")):
+    dst_file = dst_dir / src_file.name
+    if src_file.name.endswith("_info.csv"):
+        shutil.copy2(src_file, dst_file)
+        continue
+
+    with src_file.open(newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        rows = list(reader)
+
+    if ratio < 1:
+        rng = random.Random(f"{src_file.name}:{ratio_text}")
+        sample_size = max(1, math.ceil(len(rows) * ratio))
+        rows = sorted(rng.sample(rows, sample_size))
+
+    with dst_file.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        writer.writerows(rows)
+
+    print(f"{src_file.name}: {len(rows)} rows")
+PY
+}
+
 download_librispeech_split() {
     local split=$1
     local archive="${split}.tar.gz"
@@ -102,6 +160,7 @@ download_wham() {
 }
 
 ensure_librimix_repo
+prepare_sampled_metadata
 
 download_librispeech_split dev-clean &
 download_librispeech_split test-clean &
@@ -121,11 +180,12 @@ echo "  output: ${librimix_storage_dir}/Libri2Mix"
 echo "  freqs: ${freq_args[*]}"
 echo "  modes: ${mode_args[*]}"
 echo "  types: ${type_args[*]}"
+echo "  sample_ratio: ${sample_ratio}"
 
 "${python_bin}" "${librimix_repo_dir}/scripts/create_librimix_from_metadata.py" \
     --librispeech_dir "${librispeech_dir}" \
     --wham_dir "${wham_dir}" \
-    --metadata_dir "${librimix_repo_dir}/metadata/Libri2Mix" \
+    --metadata_dir "${metadata_dir}" \
     --librimix_outdir "${librimix_storage_dir}" \
     --n_src 2 \
     --freqs "${freq_args[@]}" \

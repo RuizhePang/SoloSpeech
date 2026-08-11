@@ -20,6 +20,19 @@ def read_enrollment_csv(csv_path):
             data[mix_id][utt_id] = aux
     return data
 
+
+def load_vae_tensor(path):
+    data = torch.load(path)
+    if isinstance(data, dict):
+        return data["latent"], data.get("std")
+    return data, None
+
+
+def transpose_optional(tensor):
+    if tensor is None:
+        return None
+    return tensor.transpose(1, 0)
+
 class TSEDataset(Dataset):
     def __init__(
             self, 
@@ -58,21 +71,25 @@ class TSEDataset(Dataset):
         tgt_spk_idx = mix_id.split('_').index(utt_id)
 
         # read mixture
-        mixture = torch.load(mixture_path.replace(self.base_dir, self.vae_dir).replace('.wav','.pt'))
+        mixture, mixture_std = load_vae_tensor(mixture_path.replace(self.base_dir, self.vae_dir).replace('.wav','.pt'))
         source_path = row[f'source_{tgt_spk_idx+1}_path']
-        source = torch.load(source_path.replace(self.base_dir, self.vae_dir).replace('.wav','.pt'))
+        source, source_std = load_vae_tensor(source_path.replace(self.base_dir, self.vae_dir).replace('.wav','.pt'))
         exclude_path = source_path.replace('/s1/', '/s2/') if '/s1/' in source_path else source_path.replace('/s2/', '/s1/')
-        exclude = torch.load(exclude_path.replace(self.base_dir, self.vae_dir).replace('.wav','.pt'))
+        exclude, exclude_std = load_vae_tensor(exclude_path.replace(self.base_dir, self.vae_dir).replace('.wav','.pt'))
         assert mixture.shape == source.shape, mixture.shape
         assert source.shape == exclude.shape, exclude.shape
         mixture = mixture.transpose(1,0)
         source = source.transpose(1,0)
         exclude = exclude.transpose(1,0)
+        mixture_std = transpose_optional(mixture_std)
+        source_std = transpose_optional(source_std)
+        exclude_std = transpose_optional(exclude_std)
         
         # read enrollment
         reference_path, _ = random.choice(self.data_aux[mix_id][utt_id])
-        reference = torch.load(reference_path.replace(self.base_dir, self.vae_dir).replace('.wav','.pt'))
+        reference, reference_std = load_vae_tensor(reference_path.replace(self.base_dir, self.vae_dir).replace('.wav','.pt'))
         reference = reference.transpose(1,0)
+        reference_std = transpose_optional(reference_std)
 
         if self.training:
             if mixture.shape[0] > self.min_length:
@@ -81,10 +98,18 @@ class TSEDataset(Dataset):
                 mixture = mixture[start:start+new_length]
                 source = source[start:start+new_length]
                 exclude = exclude[start:start+new_length]
+                if mixture_std is not None:
+                    mixture_std = mixture_std[start:start+new_length]
+                if source_std is not None:
+                    source_std = source_std[start:start+new_length]
+                if exclude_std is not None:
+                    exclude_std = exclude_std[start:start+new_length]
             if reference.shape[0] > self.min_length:
                 new_length = random.randint(self.min_length, reference.shape[0])
                 start = random.randint(0, reference.shape[0]-new_length)
                 reference = reference[start:start+new_length]
+                if reference_std is not None:
+                    reference_std = reference_std[start:start+new_length]
 
             
         return {
@@ -92,6 +117,10 @@ class TSEDataset(Dataset):
             'source_vae': source,
             'reference_vae': reference,
             'exclude_vae': exclude,
+            'mixture_std': mixture_std,
+            'source_std': source_std,
+            'reference_std': reference_std,
+            'exclude_std': exclude_std,
             'length': mixture.shape[0],
             'reference_length': reference.shape[0],
             'id': mix_id,
@@ -115,6 +144,11 @@ class TSEDataset(Dataset):
         out['exclude_vae'] = torch.nn.utils.rnn.pad_sequence(out['exclude_vae'], batch_first=True, padding_value=0.0)
         out["reference_length"] = torch.LongTensor(out["reference_length"])
         out['reference_vae'] = torch.nn.utils.rnn.pad_sequence(out['reference_vae'], batch_first=True, padding_value=0.0)
+        for key in ['mixture_std', 'source_std', 'exclude_std', 'reference_std']:
+            if all(val is not None for val in out[key]):
+                out[key] = torch.nn.utils.rnn.pad_sequence(out[key], batch_first=True, padding_value=0.0)
+            else:
+                out[key] = None
         return out
 
     def get_infos(self):
@@ -158,11 +192,11 @@ class TSRDataset(Dataset):
         tgt_spk_idx = mix_id.split('_').index(utt_id)
 
         # read mixture
-        mixture = torch.load(mixture_path.replace(self.base_dir, self.vae_dir).replace('.wav','.pt'))
+        mixture, _ = load_vae_tensor(mixture_path.replace(self.base_dir, self.vae_dir).replace('.wav','.pt'))
         source_path = row[f'source_{tgt_spk_idx+1}_path']
-        source = torch.load(source_path.replace(self.base_dir, self.vae_dir).replace('.wav','.pt'))
+        source, _ = load_vae_tensor(source_path.replace(self.base_dir, self.vae_dir).replace('.wav','.pt'))
         exclude_path = source_path.replace('/s1/', '/s2/') if '/s1/' in source_path else source_path.replace('/s2/', '/s1/')
-        exclude = torch.load(exclude_path.replace(self.base_dir, self.vae_dir).replace('.wav','.pt'))
+        exclude, _ = load_vae_tensor(exclude_path.replace(self.base_dir, self.vae_dir).replace('.wav','.pt'))
         assert mixture.shape == source.shape, mixture.shape
         assert source.shape == exclude.shape, exclude.shape
         mixture = mixture.transpose(1,0)

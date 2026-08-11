@@ -54,21 +54,35 @@ def output_path_for(wav_path, relative_root, output_root):
     return output_root / rel_path.with_suffix(".pt")
 
 
+def encoded_file_complete(path, model_type):
+    if not path.exists():
+        return False
+    if model_type not in ("stft_vae", "stft_autoencoder"):
+        return True
+
+    encoded = torch.load(path, map_location="cpu")
+    return isinstance(encoded, dict) and "latent" in encoded and "std" in encoded
+
+
 def encode_wav(autoencoder, wav_path, sample_rate, device, model_type):
     audio, _ = librosa.load(wav_path, sr=sample_rate, mono=True)
     audio = torch.from_numpy(audio).float().unsqueeze(0).unsqueeze(0).to(device)
 
     with torch.no_grad():
         if model_type in ("stft_vae", "stft_autoencoder"):
-            latent, _std = autoencoder.encode(audio)
+            latent, std = autoencoder.encode(audio)
         else:
             latent = autoencoder.encode(audio)
+            std = None
 
-    return latent.squeeze(0).cpu()
+    output = {"latent": latent.squeeze(0).cpu()}
+    if std is not None:
+        output["std"] = std.squeeze(0).cpu()
+    return output
 
 
-def update_stats(latent, stats):
-    values = latent.float()
+def update_stats(encoded, stats):
+    values = encoded["latent"].float()
     stats["sum"] += values.sum().item()
     stats["sum_sq"] += values.square().sum().item()
     stats["count"] += values.numel()
@@ -132,14 +146,14 @@ def main(cfg: DictConfig):
     for wav_path in wavs:
         logger.info(f"Encoding idx {encoded + skipped + 1}/{len(wavs)}: {wav_path}")
         out_path = output_path_for(wav_path, relative_root, output_root)
-        if out_path.exists():
+        if encoded_file_complete(out_path, model_type):
             skipped += 1
             continue
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        latent = encode_wav(autoencoder, wav_path, sample_rate, device, model_type)
-        torch.save(latent, out_path)
-        update_stats(latent, stats)
+        encoded_wav = encode_wav(autoencoder, wav_path, sample_rate, device, model_type)
+        torch.save(encoded_wav, out_path)
+        update_stats(encoded_wav, stats)
         encoded += 1
 
     logger.info(f"Encoded files: {encoded}")

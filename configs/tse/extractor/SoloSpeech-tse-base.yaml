@@ -1,0 +1,74 @@
+system: base_solospeech_tse
+
+data:
+  sample_rate: 16000
+  vae_rate: 50
+  task: sep_noisy
+  n_src: 2
+  min_length: 3.0
+  train_subsets:
+    - train-100
+    - train-360
+  val_subset: dev
+  sample_rate_dir: wav16k
+  mix_mode: min
+  debug_train: false
+  debug_val: false
+
+training:
+  seed: 2025
+  amp: fp16
+  epochs: 200
+  batch_size: 32
+  num_workers: 16
+  num_threads: 1
+  save_every: 1
+  log_step: 50
+  validate_every: 1
+  num_infer_steps: 50
+  resume_from: null
+
+demo:
+  enabled: true
+  every: 1
+  max_batches: 1
+  eta: 0.0
+  seed: 2024
+
+optimization:
+  learning_rate: 1e-4
+  beta1: 0.9
+  beta2: 0.999
+  weight_decay: 1e-4
+  adam_epsilon: 1e-8
+
+ddim:
+  v_prediction: true
+  diffusers:
+    num_train_timesteps: 1000
+    beta_schedule: scaled_linear
+    beta_start: 0.00085
+    beta_end: 0.012
+    prediction_type: v_prediction
+    rescale_betas_zero_snr: true
+    timestep_spacing: trailing
+    clip_sample: false
+
+diffwrap:
+  ViT:
+    in_chans: 384
+    embed_dim: 384
+    depth: 12
+    num_heads: 6
+    mlp_ratio: 4.0
+    use_checkpoint: false
+  UDiT:
+    in_chans: 256
+    out_chans: 128
+    embed_dim: 768
+    depth: 12
+    num_heads: 12
+    mlp_ratio: 4.0
+    use_checkpoint: false
+    context_dim: 384
+    context_fusion: cross

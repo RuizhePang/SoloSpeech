@@ -27,14 +27,16 @@ if [[ "${HOSTNAME:-}" == asp2a* ]]; then
 fi
 
 stage=0 # Download and prepare Libri2Mix data
-stage=1 # Prepare SpeakerBeam-style TSE data
-stage=2 # Train VAE on Libri2Mix data
+# stage=1 # Prepare SpeakerBeam-style TSE data
+# stage=2 # Train VAE on Libri2Mix data
 # stage=3 # Extract VAE embeddings for Libri2Mix data
+# stage=4 # Train TSE extractor on Libri2Mix VAE embeddings
 
 stop_stage=$stage
 
 # config=pretrained
 config=SoloSpeech
+librimix_sample_ratio=0.0001
 
 save_dir="experiments/${config}"
 log_dir="$save_dir/logs"
@@ -50,7 +52,8 @@ if [[ $stage -le 0 && $stop_stage -ge 0 ]]; then
         "$PYTHON_BIN" \
         "16k" \
         "min" \
-        "mix_clean mix_both"
+        "mix_clean mix_both" \
+        "$librimix_sample_ratio"
 fi
 
 if [[ $stage -le 1 && $stop_stage -ge 1 ]]; then
@@ -94,5 +97,21 @@ if [[ $stage -le 3 && $stop_stage -ge 3 ]]; then
         "$PYTHON_BIN" scripts/extract_vae.py \
         --config-name="${config}" \
         save_dir="${save_dir}/compressor" \
+        data_dir="${data_dir}"
+fi
+
+if [[ $stage -le 4 && $stop_stage -ge 4 ]]; then
+    export PYTHONPATH="$PWD:$PWD/solospeech/stable_audio_vae:${PYTHONPATH:-}"
+    explog="$log_dir/train.tse.log"
+    if [[ -f "$explog" ]]; then
+        echo "Log file $explog already exists. Please remove it before running the script."
+        exit 1
+    fi
+    echo "Stage 4: running TSE extractor training with config: $config
+    Logging to: $explog"
+    "$cmd" "${scheduler_arguments[@]}" "$explog" \
+        "$PYTHON_BIN" scripts/train/tse.py \
+        --config-name="${config}" \
+        save_dir="${save_dir}/extractor" \
         data_dir="${data_dir}"
 fi
