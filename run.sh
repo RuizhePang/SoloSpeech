@@ -34,7 +34,8 @@ fi
 # stage=4 # Train TSE extractor on Libri2Mix VAE embeddings
 # stage=5 # Generate FastGECO corrector training data with extractor
 # stage=6 # Train FastGECO corrector
-stage=7 # Evaluate compressor/extractor/corrector/system metrics
+# stage=7 # Evaluate compressor/extractor/corrector/system metrics
+stage=8 # Download and prepare LibriCSS test data
 
 stop_stage=$stage
 
@@ -184,4 +185,13 @@ if [[ $stage -le 7 && $stop_stage -ge 7 ]]; then
         "${evaluation_overrides[@]}" \
         save_dir="${save_dir}" \
         data_dir="${data_dir}"
+fi
+
+if [[ $stage -le 8 && $stop_stage -ge 8 ]]; then
+    echo "Stage 8: downloading/preparing LibriCSS test data into $data_dir/LibriCSS"
+    bash scripts/prepare_LibriCSS.sh \
+        "$data_dir/LibriCSS" \
+        "$PYTHON_BIN" \
+        "0" \
+        "0"
 fi
