@@ -3,9 +3,16 @@
 import csv
 import copy
 import json
+import os
 import re
 from collections import defaultdict
 from pathlib import Path
+
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+os.environ.setdefault("ORT_DISABLE_CPU_AFFINITY", "1")
 
 import hydra
 import librosa
@@ -387,8 +394,20 @@ class DNSMOS:
         session_options = ort.SessionOptions()
         session_options.intra_op_num_threads = int(num_threads)
         session_options.inter_op_num_threads = int(num_threads)
-        self.primary = ort.InferenceSession(str(model_dir / "sig_bak_ovr.onnx"), sess_options=session_options)
-        self.p808 = ort.InferenceSession(str(model_dir / "model_v8.onnx"), sess_options=session_options)
+        session_options.log_severity_level = 3
+        session_options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        session_options.add_session_config_entry("session.inter_op.allow_spinning", "0")
+        providers = ["CPUExecutionProvider"]
+        self.primary = ort.InferenceSession(
+            str(model_dir / "sig_bak_ovr.onnx"),
+            sess_options=session_options,
+            providers=providers,
+        )
+        self.p808 = ort.InferenceSession(
+            str(model_dir / "model_v8.onnx"),
+            sess_options=session_options,
+            providers=providers,
+        )
 
     @staticmethod
     def audio_melspec(audio, sample_rate, n_mels=120, frame_size=320, hop_length=160):
