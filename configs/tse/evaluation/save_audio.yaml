@@ -10,7 +10,7 @@ split: test
 sample_rate: 16000
 max_items: null
 overwrite: false
-save_audio_outputs: false
+save_audio_outputs: true
 save_audio_num_samples: 20
 save_audio_seed: 2024
 whisper_model: large-v3-turbo

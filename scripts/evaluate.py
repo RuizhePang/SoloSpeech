@@ -3,6 +3,7 @@
 import csv
 import copy
 import json
+import random
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -350,10 +351,8 @@ def progress_iter(items, label, log_every=50):
         return
 
     logger.info(f"{label}: started, total={total}")
-    for idx, item in enumerate(items, start=1):
+    for item in items:
         yield item
-        if idx == total or idx % log_every == 0:
-            logger.info(f"{label}: {idx}/{total}")
 
 
 def eval_log_every(cfg):
@@ -362,6 +361,14 @@ def eval_log_every(cfg):
 
 def save_audio_outputs(cfg):
     return bool(cfg.evaluation.get("save_audio_outputs", False))
+
+
+def save_audio_num_samples(cfg):
+    return int(cfg.evaluation.get("save_audio_num_samples", 20))
+
+
+def save_audio_seed(cfg):
+    return int(cfg.evaluation.get("save_audio_seed", 2024))
 
 
 def format_item_metrics(row):
@@ -558,12 +565,6 @@ def source_index_from_path(path):
     return int(match.group(1)) if match else None
 
 
-def raw_output_path(cfg, category, pair, suffix=None):
-    root = get_evaluation_root(cfg) / "generated" / category / cfg.evaluation.split
-    name = f"{pair['id']}.wav" if suffix is None else f"{pair['id']}_{suffix}.wav"
-    return root / name
-
-
 def get_compressor_audio_pairs(cfg):
     manifest_pairs = get_manifest_audio_pairs(cfg, "compressor")
     if manifest_pairs is not None:
@@ -624,10 +625,6 @@ def get_system_audio_pairs(cfg):
     return get_extractor_audio_pairs(cfg)
 
 
-def get_system_output_path(cfg, pair):
-    return raw_output_path(cfg, "system", pair)
-
-
 def encode_audio(autoencoder, path, sample_rate, device, model_type):
     audio, _ = librosa.load(path, sr=sample_rate, mono=True)
     audio_tensor = torch.from_numpy(audio).float().unsqueeze(0).unsqueeze(0).to(device)
@@ -681,14 +678,7 @@ def make_compressor_runtime(cfg):
 
 
 def decode_compressor_output(cfg, pair, runtime):
-    output_path = raw_output_path(cfg, "compressor", pair) if save_audio_outputs(cfg) else None
-    if output_path is not None:
-        pair["estimate"] = output_path
-    else:
-        pair.pop("estimate", None)
-    if output_path is not None and output_path.is_file() and not cfg.evaluation.overwrite:
-        return False
-
+    pair.pop("estimate", None)
     device = runtime["device"]
     autoencoder = runtime["autoencoder"]
     model_type = runtime["model_type"]
@@ -702,8 +692,6 @@ def decode_compressor_output(cfg, pair, runtime):
         device,
     )
     pair["estimate_audio"] = tensor_to_audio_array(audio)
-    if output_path is not None:
-        save_audio(output_path, cfg.evaluation.sample_rate, audio.squeeze(0))
     return True
 
 
@@ -819,13 +807,7 @@ def sample_extractor_output(model, scheduler, mix_item, reference_item, cfg, dev
 
 
 def generate_extractor_output(cfg, pair, runtime):
-    output_path = raw_output_path(cfg, "extractor", pair) if save_audio_outputs(cfg) else None
-    if output_path is not None:
-        pair["estimate"] = output_path
-    else:
-        pair.pop("estimate", None)
-    if output_path is not None and output_path.is_file() and not cfg.evaluation.overwrite:
-        return False
+    pair.pop("estimate", None)
     if "mix" not in pair:
         raise RuntimeError(f"Extractor evaluation requires mix for {pair['id']}")
 
@@ -851,8 +833,6 @@ def generate_extractor_output(cfg, pair, runtime):
         device,
     )
     pair["estimate_audio"] = tensor_to_audio_array(audio)
-    if output_path is not None:
-        save_audio(output_path, cfg.evaluation.sample_rate, audio.squeeze(0))
     return True
 
 
@@ -865,6 +845,45 @@ def save_audio(path, sample_rate, audio):
     if audio.ndim == 1:
         audio = audio.unsqueeze(0)
     torchaudio.save(str(path), audio, sample_rate)
+
+
+def save_audio_array(path, sample_rate, audio):
+    audio = np.asarray(audio, dtype=np.float32)
+    save_audio(path, sample_rate, torch.from_numpy(audio))
+
+
+def safe_name(value):
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_") or "sample"
+
+
+def audio_sample_dir(cfg, category, pair):
+    return get_evaluation_root(cfg) / "audio_samples" / category / cfg.evaluation.split / safe_name(pair["id"])
+
+
+def select_audio_sample_indices(cfg, pairs):
+    if not save_audio_outputs(cfg):
+        return set()
+    total = len(pairs)
+    num_samples = min(save_audio_num_samples(cfg), total)
+    if num_samples <= 0:
+        return set()
+    rng = random.Random(save_audio_seed(cfg))
+    return set(rng.sample(range(1, total + 1), num_samples))
+
+
+def save_demo_audio_bundle(cfg, category, pair):
+    output_dir = audio_sample_dir(cfg, category, pair)
+    sample_rate = cfg.evaluation.sample_rate
+    save_audio_array(output_dir / "ground_truth.wav", sample_rate, load_audio(pair["source"], sample_rate))
+
+    if pair.get("mix") is not None:
+        save_audio_array(output_dir / "mixture.wav", sample_rate, load_audio(pair["mix"], sample_rate))
+    if pair.get("reference") is not None:
+        save_audio_array(output_dir / "enrollment.wav", sample_rate, load_audio(pair["reference"], sample_rate))
+    if pair.get("estimate_audio") is not None:
+        save_audio_array(output_dir / "extractor.wav", sample_rate, pair["estimate_audio"])
+    if pair.get("system_audio") is not None:
+        save_audio_array(output_dir / "final.wav", sample_rate, pair["system_audio"])
 
 
 def resolve_corrector_ckpt(cfg):
@@ -885,15 +904,7 @@ def make_corrector_runtime(cfg):
 
 
 def run_corrector_output(cfg, pair, runtime):
-    output_path = pair.get("system_estimate") if save_audio_outputs(cfg) else None
-    if output_path is None and save_audio_outputs(cfg):
-        output_path = get_system_output_path(cfg, pair)
-    if output_path is not None:
-        pair["system_estimate"] = output_path
-    else:
-        pair.pop("system_estimate", None)
-    if output_path is not None and output_path.is_file() and not cfg.evaluation.overwrite:
-        return False
+    pair.pop("system_estimate", None)
     if "mix" not in pair or ("estimate_audio" not in pair and "estimate" not in pair):
         raise RuntimeError(
             f"Cannot run corrector for {pair['id']}: evaluation must have generated extractor estimate and manifest must provide mix."
@@ -937,12 +948,11 @@ def run_corrector_output(cfg, pair, runtime):
                 x_t = mean_x_tm1 + torch.randn_like(x_t) * g * torch.sqrt(dt)
         audio = model.to_audio(x_t.squeeze(), length) * norm_factor
     pair["system_audio"] = tensor_to_audio_array(audio)
-    if output_path is not None:
-        save_audio(output_path, cfg.evaluation.sample_rate, audio)
     return True
 
 
-def compute_row(cfg, category, pair, metrics, dnsmos=None, wer=None):
+def compute_row(cfg, category, pair, metrics, dnsmos=None, wer=None, item_index=None, total_items=None):
+    log_prefix = f"[{item_index}/{total_items}] " if item_index is not None and total_items is not None else ""
     sample_rate = cfg.evaluation.sample_rate
     if category in ("corrector", "system"):
         estimate_path = pair.get("system_estimate") or pair.get("estimate")
@@ -953,7 +963,7 @@ def compute_row(cfg, category, pair, metrics, dnsmos=None, wer=None):
         estimate_path = pair.get("estimate")
         generated_audio = pair.get("estimate_audio")
     if estimate_path is None and generated_audio is None:
-        logger.warning(f"Skip {pair['id']}: no estimate path for {category}")
+        logger.warning(f"{log_prefix}Skip {pair['id']}: no estimate path for {category}")
         return None
 
     estimate_label = str(estimate_path) if estimate_path is not None else "memory"
@@ -990,17 +1000,27 @@ def compute_row(cfg, category, pair, metrics, dnsmos=None, wer=None):
             else:
                 raise ValueError(f"Unsupported metric: {metric}")
         except Exception as exc:
-            logger.warning(f"{metric} failed for {estimate_label}: {exc}")
+            logger.warning(f"{log_prefix}{metric} failed for {estimate_label}: {exc}")
             row[name] = float("nan")
 
-    logger.info(f"{category} item {pair['id']}: {format_item_metrics(row)}")
+    logger.info(f"{log_prefix}{category} item {pair['id']}: {format_item_metrics(row)}")
     return row
 
 
 def compute_rows(cfg, category, pairs, metrics, dnsmos=None, wer=None):
     rows = []
-    for pair in progress_iter(pairs, f"Evaluate {category}", eval_log_every(cfg)):
-        row = compute_row(cfg, category, pair, metrics, dnsmos=dnsmos, wer=wer)
+    total = len(pairs)
+    for idx, pair in enumerate(progress_iter(pairs, f"Evaluate {category}", eval_log_every(cfg)), start=1):
+        row = compute_row(
+            cfg,
+            category,
+            pair,
+            metrics,
+            dnsmos=dnsmos,
+            wer=wer,
+            item_index=idx,
+            total_items=total,
+        )
         if row is not None:
             rows.append(row)
     return rows
@@ -1019,7 +1039,13 @@ def run_category_pipeline(
 ):
     rows = []
     label = f"Evaluate {category} pipeline"
-    for pair in progress_iter(pairs, label, eval_log_every(cfg)):
+    total = len(pairs)
+    audio_sample_indices = select_audio_sample_indices(cfg, pairs)
+    if audio_sample_indices:
+        sample_dir = get_evaluation_root(cfg) / "audio_samples" / category / cfg.evaluation.split
+        logger.info(f"Saving {len(audio_sample_indices)} random {category} audio samples to {sample_dir}")
+
+    for idx, pair in enumerate(progress_iter(pairs, label, eval_log_every(cfg)), start=1):
         if category == "compressor":
             decode_compressor_output(cfg, pair, compressor_runtime)
         elif category == "extractor":
@@ -1030,7 +1056,19 @@ def run_category_pipeline(
         else:
             raise ValueError(f"Unsupported evaluation category: {category}")
 
-        row = compute_row(cfg, category, pair, metrics, dnsmos=dnsmos, wer=wer)
+        if idx in audio_sample_indices:
+            save_demo_audio_bundle(cfg, category, pair)
+
+        row = compute_row(
+            cfg,
+            category,
+            pair,
+            metrics,
+            dnsmos=dnsmos,
+            wer=wer,
+            item_index=idx,
+            total_items=total,
+        )
         if row is not None:
             rows.append(row)
     return rows
