@@ -389,9 +389,16 @@ def load_audio(path, sample_rate):
     return audio.astype(np.float32)
 
 
-def tensor_to_audio_array(audio):
-    audio = audio.detach().float().cpu().squeeze().clamp(-0.999, 0.999)
-    return audio.numpy().astype(np.float32)
+def tensor_to_audio_array(audio, fallback=None, label=None):
+    audio = audio.detach().float().cpu().squeeze().numpy().astype(np.float32)
+    if not np.all(np.isfinite(audio)):
+        if fallback is not None:
+            logger.warning(f"{label or 'audio'} contains NaN/Inf; falling back to extractor output")
+            return np.asarray(fallback, dtype=np.float32)
+        logger.warning(f"{label or 'audio'} contains NaN/Inf; replacing invalid samples with 0")
+        audio = np.nan_to_num(audio)
+
+    return np.clip(audio, -0.999, 0.999).astype(np.float32)
 
 
 def trim_pair(reference, estimate):
@@ -565,6 +572,94 @@ def source_index_from_path(path):
     return int(match.group(1)) if match else None
 
 
+def speakerbeam_csv_dir(cfg):
+    return (
+        Path(cfg.data_dir)
+        / "Libri2Mix"
+        / "SpeakerBeamData"
+        / cfg.extractor.data.sample_rate_dir
+        / cfg.extractor.data.mix_mode
+        / cfg.evaluation.split
+    )
+
+
+def speakerbeam_mix_csv(cfg, csv_dir):
+    task_candidates = []
+    task = str(cfg.extractor.data.get("task", "sep_noisy"))
+    if task == "sep_noisy":
+        task_candidates.append("mix_both")
+    elif task == "sep_clean":
+        task_candidates.append("mix_clean")
+    task_candidates.extend(["mix_both", "mix_clean"])
+
+    for task_name in dict.fromkeys(task_candidates):
+        path = csv_dir / f"mixture_{cfg.evaluation.split}_{task_name}.csv"
+        if path.is_file():
+            return path
+    return None
+
+
+def first_existing_path(row, cfg, csv_dir, *names):
+    value = value_for(row, *names)
+    return path_for(value, cfg, csv_dir)
+
+
+def first_enrollment_path(row, cfg, csv_dir):
+    for idx in range(1, 32):
+        path = first_existing_path(row, cfg, csv_dir, f"enr_path{idx}", f"enrollment_path{idx}", f"reference_path{idx}")
+        if path is not None:
+            return path
+    return first_existing_path(row, cfg, csv_dir, "enr_path", "enrollment_path", "reference_path")
+
+
+def get_speakerbeam_audio_pairs(cfg, category):
+    csv_dir = speakerbeam_csv_dir(cfg)
+    enrollment_csv = csv_dir / "mixture2enrollment.csv"
+    mix_csv = speakerbeam_mix_csv(cfg, csv_dir)
+    if not enrollment_csv.is_file() or mix_csv is None:
+        return None
+
+    with mix_csv.open(newline="") as f:
+        mixture_rows = {
+            normalize_manifest_row(row).get("mixture_id"): normalize_manifest_row(row)
+            for row in csv.DictReader(f)
+        }
+
+    pairs = []
+    with enrollment_csv.open(newline="") as f:
+        for row in csv.DictReader(f):
+            row = normalize_manifest_row(row)
+            mix_id = value_for(row, "mixture_id", "mix_id")
+            utt_id = value_for(row, "utterance_id", "utt_id")
+            if is_null_value(mix_id) or is_null_value(utt_id) or mix_id not in mixture_rows:
+                continue
+
+            utts = str(mix_id).split("_")
+            if str(utt_id) not in utts:
+                logger.warning(f"Skip {mix_id}/{utt_id}: utterance is not part of mixture id")
+                continue
+            source_idx = utts.index(str(utt_id)) + 1
+            mix_row = mixture_rows[str(mix_id)]
+            source_path = first_existing_path(mix_row, cfg, csv_dir, f"source_{source_idx}_path", f"s{source_idx}_path")
+            mix_path = first_existing_path(mix_row, cfg, csv_dir, "mixture_path", "mix_path")
+            reference_path = first_enrollment_path(row, cfg, csv_dir)
+            if source_path is None or mix_path is None or reference_path is None:
+                logger.warning(f"Skip {mix_id}/source{source_idx}: missing source, mixture, or enrollment path")
+                continue
+
+            pairs.append(
+                {
+                    "id": f"{mix_id}_source{source_idx}",
+                    "source": source_path,
+                    "mix": mix_path,
+                    "reference": reference_path,
+                }
+            )
+
+    logger.info(f"Loaded {len(pairs)} {category} pairs from SpeakerBeam metadata {csv_dir}")
+    return pairs
+
+
 def get_compressor_audio_pairs(cfg):
     manifest_pairs = get_manifest_audio_pairs(cfg, "compressor")
     if manifest_pairs is not None:
@@ -586,6 +681,9 @@ def get_extractor_audio_pairs(cfg):
     manifest_pairs = get_manifest_audio_pairs(cfg, "extractor")
     if manifest_pairs is not None:
         return manifest_pairs
+    speakerbeam_pairs = get_speakerbeam_audio_pairs(cfg, "extractor")
+    if speakerbeam_pairs is not None:
+        return speakerbeam_pairs
 
     sample_rate_dir = cfg.extractor.data.sample_rate_dir
     mix_mode = cfg.extractor.data.mix_mode
@@ -608,6 +706,7 @@ def get_extractor_audio_pairs(cfg):
                     "reference": source_path,
                 }
             )
+    logger.warning("SpeakerBeam enrollment metadata not found; using target source as fallback reference")
     return pairs
 
 
@@ -955,8 +1054,13 @@ def run_corrector_output(cfg, pair, runtime):
                 x_t = mean_x_tm1
             else:
                 x_t = mean_x_tm1 + torch.randn_like(x_t) * g * torch.sqrt(dt)
-        audio = model.to_audio(x_t.squeeze(), length) * norm_factor
-    pair["system_audio"] = tensor_to_audio_array(audio)
+        audio = model.to_audio(x_t.squeeze(), length)
+        audio = audio * norm_factor / audio.abs().max().clamp_min(1e-8)
+    pair["system_audio"] = tensor_to_audio_array(
+        audio,
+        fallback=estimate_audio,
+        label=f"corrector output for {pair['id']}",
+    )
     return True
 
 
@@ -1083,6 +1187,10 @@ def run_category_pipeline(
 
 
 def write_results(cfg, category, rows):
+    if save_audio_outputs(cfg):
+        logger.info(f"Skip writing {category} result files because evaluation.save_audio_outputs=true")
+        return
+
     output_dir = get_evaluation_root(cfg) / category
     output_dir.mkdir(parents=True, exist_ok=True)
     if not rows:
