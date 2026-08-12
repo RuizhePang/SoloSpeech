@@ -78,6 +78,20 @@ subprocess.check_call(
 PY
 }
 
+ensure_gdown() {
+    if "${python_bin}" - <<'PY'
+import importlib.util
+import sys
+sys.exit(0 if importlib.util.find_spec("gdown") is not None else 1)
+PY
+    then
+        return 0
+    fi
+
+    echo "Installing gdown into ${python_bin}'s environment"
+    "${python_bin}" -m pip install -q gdown
+}
+
 download_with_wget() {
     (
         cd "${raw_dir}"
@@ -106,7 +120,7 @@ if ! is_valid_zip "${zip_path}"; then
         rm -f "${zip_path}"
     fi
     echo "Downloading LibriCSS for_release.zip into ${raw_dir}"
-    if ! download_with_gdown; then
+    if ! ensure_gdown || ! download_with_gdown; then
         echo "gdown is unavailable or failed; falling back to wget." >&2
         download_with_wget
     fi
