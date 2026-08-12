@@ -15,7 +15,6 @@ save_audio_num_samples: 20
 save_audio_seed: 2024
 whisper_model: large-v3-turbo
 dnsmos_num_threads: 1
-log_every: 50
 
 compressor:
   sources:

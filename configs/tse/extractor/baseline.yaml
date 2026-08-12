@@ -34,6 +34,7 @@ demo:
   max_batches: 1
   eta: 0.0
   seed: 2024
+  decode_std: mixture
 
 optimization:
   learning_rate: 1e-4

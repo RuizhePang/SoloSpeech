@@ -287,12 +287,16 @@ def run_audio_demo(model, autoencoder, scheduler, demo_loader, cfg, accelerator,
                 generator=generator,
             ).prev_sample
 
-        source_std = batch["source_std"]
-        if source_std is None and compressor_model_type in ("stft_vae", "stft_autoencoder"):
+        decode_std_name = str(demo_cfg.get("decode_std", "mixture"))
+        decode_std_key = f"{decode_std_name}_std"
+        if decode_std_key not in batch:
+            raise RuntimeError(f"Unsupported extractor.demo.decode_std: {decode_std_name}")
+        decode_std = batch[decode_std_key]
+        if decode_std is None and compressor_model_type in ("stft_vae", "stft_autoencoder"):
             raise RuntimeError("Audio demo requires std saved by stage3. Rerun stage3 to regenerate VAE .pt files.")
 
         if compressor_model_type in ("stft_vae", "stft_autoencoder"):
-            pred_wav = autoencoder.decode(pred.transpose(2, 1), source_std.to(accelerator.device).transpose(2, 1))
+            pred_wav = autoencoder.decode(pred.transpose(2, 1), decode_std.to(accelerator.device).transpose(2, 1))
         else:
             pred_wav = autoencoder.decode(pred.transpose(2, 1))
 

@@ -294,8 +294,7 @@ def get_manifest_audio_pairs(cfg, category):
             if mix_path is not None:
                 pair["mix"] = mix_path
             if reference_path is None:
-                reference_path = source_path
-                logger.warning(f"{pair['id']}: no enrollment/reference in manifest, using source as reference")
+                raise ValueError(f"{pair['id']}: manifest row is missing enrollment/reference")
             pair["reference"] = reference_path
 
             transcript = text_for(row, category, source_idx)
@@ -344,21 +343,6 @@ def mean_std(values):
     return float(np.mean(arr)), float(np.std(arr))
 
 
-def progress_iter(items, label, log_every=50):
-    total = len(items)
-    if total == 0:
-        logger.info(f"{label}: no items")
-        return
-
-    logger.info(f"{label}: started, total={total}")
-    for item in items:
-        yield item
-
-
-def eval_log_every(cfg):
-    return max(int(cfg.evaluation.get("log_every", 50)), 1)
-
-
 def save_audio_outputs(cfg):
     return bool(cfg.evaluation.get("save_audio_outputs", False))
 
@@ -389,14 +373,10 @@ def load_audio(path, sample_rate):
     return audio.astype(np.float32)
 
 
-def tensor_to_audio_array(audio, fallback=None, label=None):
+def tensor_to_audio_array(audio, label=None):
     audio = audio.detach().float().cpu().squeeze().numpy().astype(np.float32)
     if not np.all(np.isfinite(audio)):
-        if fallback is not None:
-            logger.warning(f"{label or 'audio'} contains NaN/Inf; falling back to extractor output")
-            return np.asarray(fallback, dtype=np.float32)
-        logger.warning(f"{label or 'audio'} contains NaN/Inf; replacing invalid samples with 0")
-        audio = np.nan_to_num(audio)
+        raise RuntimeError(f"{label or 'audio'} contains NaN/Inf")
 
     return np.clip(audio, -0.999, 0.999).astype(np.float32)
 
@@ -562,16 +542,6 @@ def infer_librispeech_utt_id(path):
     return candidates[0] if candidates else None
 
 
-def source_index_from_path(path):
-    text = str(path)
-    if "/s1/" in text or "\\s1\\" in text:
-        return 1
-    if "/s2/" in text or "\\s2\\" in text:
-        return 2
-    match = re.search(r"(?:source|s)([12])", Path(path).stem)
-    return int(match.group(1)) if match else None
-
-
 def speakerbeam_csv_dir(cfg):
     return (
         Path(cfg.data_dir)
@@ -617,7 +587,9 @@ def get_speakerbeam_audio_pairs(cfg, category):
     enrollment_csv = csv_dir / "mixture2enrollment.csv"
     mix_csv = speakerbeam_mix_csv(cfg, csv_dir)
     if not enrollment_csv.is_file() or mix_csv is None:
-        return None
+        raise FileNotFoundError(
+            f"Missing SpeakerBeam metadata for {category}: expected {enrollment_csv} and mixture CSV under {csv_dir}"
+        )
 
     with mix_csv.open(newline="") as f:
         mixture_rows = {
@@ -681,33 +653,7 @@ def get_extractor_audio_pairs(cfg):
     manifest_pairs = get_manifest_audio_pairs(cfg, "extractor")
     if manifest_pairs is not None:
         return manifest_pairs
-    speakerbeam_pairs = get_speakerbeam_audio_pairs(cfg, "extractor")
-    if speakerbeam_pairs is not None:
-        return speakerbeam_pairs
-
-    sample_rate_dir = cfg.extractor.data.sample_rate_dir
-    mix_mode = cfg.extractor.data.mix_mode
-    split = cfg.evaluation.split
-    storage_root = get_librimix_storage_root(cfg)
-    raw_root = storage_root / get_raw_dataset_name(cfg) / sample_rate_dir / mix_mode / split
-    pairs = []
-    for source_dir in cfg.evaluation.compressor.sources:
-        for source_path in sorted((raw_root / source_dir).glob("*.wav")):
-            mix_path = raw_root / "mix_both" / source_path.name
-            if not mix_path.is_file():
-                mix_path = raw_root / "mix_clean" / source_path.name
-            idx = source_index_from_path(source_path)
-            pair_id = f"{source_path.stem}_source{idx}" if idx else source_path.stem
-            pairs.append(
-                {
-                    "id": pair_id,
-                    "source": source_path,
-                    "mix": mix_path,
-                    "reference": source_path,
-                }
-            )
-    logger.warning("SpeakerBeam enrollment metadata not found; using target source as fallback reference")
-    return pairs
+    return get_speakerbeam_audio_pairs(cfg, "extractor")
 
 
 def get_corrector_audio_pairs(cfg):
@@ -915,7 +861,9 @@ def generate_extractor_output(cfg, pair, runtime):
     extractor = runtime["extractor"]
     scheduler = runtime["scheduler"]
     model_type = runtime["model_type"]
-    reference_path = pair.get("reference") or pair["source"]
+    if "reference" not in pair:
+        raise RuntimeError(f"Extractor evaluation requires enrollment/reference for {pair['id']}")
+    reference_path = pair["reference"]
 
     source_item = encode_audio(autoencoder, pair["source"], cfg.evaluation.sample_rate, device, model_type)
     mix_item = encode_audio(autoencoder, pair["mix"], cfg.evaluation.sample_rate, device, model_type)
@@ -1058,7 +1006,6 @@ def run_corrector_output(cfg, pair, runtime):
         audio = audio * norm_factor / audio.abs().max().clamp_min(1e-8)
     pair["system_audio"] = tensor_to_audio_array(
         audio,
-        fallback=estimate_audio,
         label=f"corrector output for {pair['id']}",
     )
     return True
@@ -1123,7 +1070,7 @@ def compute_row(cfg, category, pair, metrics, dnsmos=None, wer=None, item_index=
 def compute_rows(cfg, category, pairs, metrics, dnsmos=None, wer=None):
     rows = []
     total = len(pairs)
-    for idx, pair in enumerate(progress_iter(pairs, f"Evaluate {category}", eval_log_every(cfg)), start=1):
+    for idx, pair in enumerate(pairs, start=1):
         row = compute_row(
             cfg,
             category,
@@ -1151,13 +1098,12 @@ def run_category_pipeline(
     corrector_runtime=None,
 ):
     rows = []
-    label = f"Evaluate {category} pipeline"
     total = len(pairs)
     if save_audio_outputs(cfg) and total > 0:
         sample_dir = get_evaluation_root(cfg) / "audio_samples" / category / cfg.evaluation.split
         logger.info(f"Saving {total} {category} audio samples to {sample_dir}")
 
-    for idx, pair in enumerate(progress_iter(pairs, label, eval_log_every(cfg)), start=1):
+    for idx, pair in enumerate(pairs, start=1):
         if category == "compressor":
             decode_compressor_output(cfg, pair, compressor_runtime)
         elif category == "extractor":
@@ -1220,6 +1166,19 @@ def write_results(cfg, category, rows):
     logger.info(f"Wrote {category} results to {output_dir}")
 
 
+def validate_decode_std_consistency(cfg, by_category):
+    if "corrector" not in by_category and "system" not in by_category:
+        return
+
+    eval_std = str(cfg.evaluation.extractor.get("decode_std", "mixture"))
+    train_std = str(cfg.corrector.generation.get("decode_std", "mixture"))
+    if eval_std != train_std:
+        raise ValueError(
+            "evaluation.extractor.decode_std must match corrector.generation.decode_std "
+            f"for corrector/system evaluation, got {eval_std!r} vs {train_std!r}."
+        )
+
+
 @hydra.main(
     version_base=None,
     config_path="../configs/tse",
@@ -1231,6 +1190,7 @@ def main(cfg: DictConfig):
     by_category = defaultdict(list)
     for metric in metrics:
         by_category[category_for_metric(metric)].append(metric)
+    validate_decode_std_consistency(cfg, by_category)
 
     dnsmos = DNSMOS(cfg.evaluation.dnsmos_num_threads) if any(metric.endswith("_dnsmos") for metric in metrics) else None
     wer = WERComputer(cfg) if any(metric.endswith("_wer") for metric in metrics) else None
