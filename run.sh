@@ -171,7 +171,7 @@ fi
 
 if [[ $stage -le 7 && $stop_stage -ge 7 ]]; then
     export PYTHONPATH="$PWD:$PWD/solospeech/stable_audio_vae:${PYTHONPATH:-}"
-    explog="$log_dir/evaluation.log"
+    explog="$log_dir/evaluation.${eval_config}.log"
     if [[ -f "$explog" ]]; then
         echo "Log file $explog already exists. Please remove it before running the script."
         exit 1
