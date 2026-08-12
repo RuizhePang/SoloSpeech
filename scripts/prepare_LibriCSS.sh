@@ -14,8 +14,10 @@ mic=${3:-0}
 max_items=${4:-0}
 
 repo_url=${LIBRICSS_REPO_URL:-"https://github.com/chenzhuo1011/libri_css.git"}
+drive_file_id=${LIBRICSS_DRIVE_FILE_ID:-"1Piioxd5G_85K9Bhcr8ebdhXx0CnaHy7l"}
 repo_dir=${LIBRICSS_REPO_DIR:-"${out_dir}/libri_css"}
 raw_dir="${out_dir}/raw"
+zip_path="${raw_dir}/for_release.zip"
 release_dir="${raw_dir}/for_release"
 processed_dir="${out_dir}/test"
 mono_dir="${processed_dir}/monaural"
@@ -48,22 +50,80 @@ else
     git clone --depth 1 "${repo_url}" "${repo_dir}"
 fi
 
-if [[ ! -f "${raw_dir}/for_release.zip" ]]; then
-    echo "Downloading LibriCSS for_release.zip into ${raw_dir}"
+is_valid_zip() {
+    [[ -f "$1" ]] && unzip -tq "$1" >/dev/null 2>&1
+}
+
+download_with_gdown() {
+    "${python_bin}" - "$drive_file_id" "$zip_path" <<'PY'
+import importlib.util
+import subprocess
+import sys
+
+file_id, output_path = sys.argv[1], sys.argv[2]
+if importlib.util.find_spec("gdown") is None:
+    sys.exit(2)
+
+subprocess.check_call(
+    [
+        sys.executable,
+        "-m",
+        "gdown",
+        "--fuzzy",
+        f"https://drive.google.com/file/d/{file_id}/view",
+        "-O",
+        output_path,
+    ]
+)
+PY
+}
+
+download_with_wget() {
     (
         cd "${raw_dir}"
-        wget --load-cookies /tmp/libricss_cookies.txt \
-            "https://docs.google.com/uc?export=download&confirm=$(wget --quiet --save-cookies /tmp/libricss_cookies.txt --keep-session-cookies --no-check-certificate 'https://docs.google.com/uc?export=download&id=1Piioxd5G_85K9Bhcr8ebdhXx0CnaHy7l' -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')&id=1Piioxd5G_85K9Bhcr8ebdhXx0CnaHy7l" \
+        rm -f /tmp/libricss_cookies.txt /tmp/libricss_download.html
+        wget --quiet --save-cookies /tmp/libricss_cookies.txt --keep-session-cookies --no-check-certificate \
+            "https://drive.google.com/uc?export=download&id=${drive_file_id}" \
+            -O /tmp/libricss_download.html
+        confirm=$(sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' /tmp/libricss_download.html | head -n 1)
+        uuid=$(sed -rn 's/.*uuid=([0-9A-Za-z_-]+).*/\1/p' /tmp/libricss_download.html | head -n 1)
+        if [[ -n "${uuid}" ]]; then
+            url="https://drive.usercontent.google.com/download?id=${drive_file_id}&export=download&confirm=t&uuid=${uuid}"
+        elif [[ -n "${confirm}" ]]; then
+            url="https://drive.google.com/uc?export=download&confirm=${confirm}&id=${drive_file_id}"
+        else
+            url="https://drive.google.com/uc?export=download&id=${drive_file_id}"
+        fi
+        wget --load-cookies /tmp/libricss_cookies.txt --no-check-certificate "${url}" \
             -O for_release.zip
-        rm -f /tmp/libricss_cookies.txt
+        rm -f /tmp/libricss_cookies.txt /tmp/libricss_download.html
     )
+}
+
+if ! is_valid_zip "${zip_path}"; then
+    if [[ -f "${zip_path}" ]]; then
+        echo "${zip_path} is not a valid zip file. Removing it before retrying." >&2
+        rm -f "${zip_path}"
+    fi
+    echo "Downloading LibriCSS for_release.zip into ${raw_dir}"
+    if ! download_with_gdown; then
+        echo "gdown is unavailable or failed; falling back to wget." >&2
+        download_with_wget
+    fi
 else
-    echo "${raw_dir}/for_release.zip already exists. Skipping download."
+    echo "${zip_path} already exists and is valid. Skipping download."
+fi
+
+if ! is_valid_zip "${zip_path}"; then
+    echo "Failed to download a valid LibriCSS zip file: ${zip_path}" >&2
+    echo "Install gdown in ${python_bin}'s environment, or manually download the official LibriCSS file to that path." >&2
+    echo "Official file: https://drive.google.com/file/d/${drive_file_id}/view" >&2
+    exit 1
 fi
 
 if [[ ! -d "${release_dir}" ]]; then
-    echo "Extracting ${raw_dir}/for_release.zip"
-    unzip -q "${raw_dir}/for_release.zip" -d "${raw_dir}"
+    echo "Extracting ${zip_path}"
+    unzip -q "${zip_path}" -d "${raw_dir}"
 else
     echo "${release_dir} already exists. Skipping extraction."
 fi
