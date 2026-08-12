@@ -379,13 +379,16 @@ def compute_estoi(reference, estimate, sample_rate):
 
 
 class DNSMOS:
-    def __init__(self):
+    def __init__(self, num_threads=1):
         import onnxruntime as ort
 
         repo_root = Path(__file__).resolve().parent.parent
         model_dir = repo_root / "solospeech" / "metrics" / "DNSMOS"
-        self.primary = ort.InferenceSession(str(model_dir / "sig_bak_ovr.onnx"))
-        self.p808 = ort.InferenceSession(str(model_dir / "model_v8.onnx"))
+        session_options = ort.SessionOptions()
+        session_options.intra_op_num_threads = int(num_threads)
+        session_options.inter_op_num_threads = int(num_threads)
+        self.primary = ort.InferenceSession(str(model_dir / "sig_bak_ovr.onnx"), sess_options=session_options)
+        self.p808 = ort.InferenceSession(str(model_dir / "model_v8.onnx"), sess_options=session_options)
 
     @staticmethod
     def audio_melspec(audio, sample_rate, n_mels=120, frame_size=320, hop_length=160):
@@ -949,7 +952,7 @@ def main(cfg: DictConfig):
         by_category[category_for_metric(metric)].append(metric)
 
     max_items = cfg.evaluation.max_items
-    dnsmos = DNSMOS() if any(metric.endswith("_dnsmos") for metric in metrics) else None
+    dnsmos = DNSMOS(cfg.evaluation.dnsmos_num_threads) if any(metric.endswith("_dnsmos") for metric in metrics) else None
     wer = WERComputer(cfg) if any(metric.endswith("_wer") for metric in metrics) else None
 
     if "compressor" in by_category:
