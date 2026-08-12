@@ -142,12 +142,15 @@ else
     echo "${release_dir} already exists. Skipping extraction."
 fi
 
-if [[ -f "${release_dir}/segment_libricss.py" && ! -f "${release_dir}/all_res.json" ]]; then
+if [[ -f "${release_dir}/segment_libricss.py" ]]; then
     echo "Running LibriCSS segmentation"
     (
         cd "${release_dir}"
         "${python_bin}" segment_libricss.py -data_path .
     )
+else
+    echo "Missing ${release_dir}/segment_libricss.py" >&2
+    exit 1
 fi
 
 echo "Preparing monaural LibriCSS utterance data with mic ${mic}"
