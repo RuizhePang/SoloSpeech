@@ -535,7 +535,8 @@ def load_librispeech_transcripts(cfg):
 
 
 def infer_librispeech_utt_id(path):
-    stem = Path(path).stem
+    path = Path(path)
+    stem = path.stem
     match = re.search(r"_source([12])(?:hatP|system)?$", stem)
     if match:
         source_idx = int(match.group(1)) - 1
@@ -544,6 +545,12 @@ def infer_librispeech_utt_id(path):
         if source_idx < len(utts):
             return utts[source_idx]
     candidates = re.findall(r"\d+-\d+-\d+", stem)
+    if len(candidates) >= 2:
+        parent = path.parent.name.lower()
+        if parent == "s1":
+            return candidates[0]
+        if parent == "s2":
+            return candidates[1]
     return candidates[0] if candidates else None
 
 
