@@ -13,7 +13,8 @@ if [[ "${HOSTNAME:-}" == asp2a* ]]; then
     data_dir="$HOME/scratch/train"
 
     qos="normal"
-    project="personal-n2602009"; name="SoloSpeech"; n_nodes=1; n_cpus=10; n_gpus=1; time=28:00:00; mem=64G
+    project="personal-n2602009"; name="SoloSpeech"; n_nodes=1; n_cpus=10; n_gpus=1; time=15:00:00; mem=64G
+    # project="personal-n2602009"; name="SoloSpeech"; n_nodes=1; n_cpus=10; n_gpus=1; time=28:00:00; mem=64G
 
     scheduler_arguments=(
         -P ${project}
@@ -41,7 +42,7 @@ config=pretrained
 # config=SoloSpeech
 
 eval_config=default
-eval_config=save_audio
+# eval_config=save_audio
 
 metrics=null
 test_dir=null
