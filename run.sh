@@ -26,19 +26,19 @@ if [[ "${HOSTNAME:-}" == asp2a* ]]; then
     )
 fi
 
-stage=0 # Download and prepare Libri2Mix data
+# stage=0 # Download and prepare Libri2Mix data
 # stage=1 # Prepare SpeakerBeam-style TSE data
 # stage=2 # Train VAE on Libri2Mix data
 # stage=3 # Extract VAE embeddings for Libri2Mix data
 # stage=4 # Train TSE extractor on Libri2Mix VAE embeddings
 # stage=5 # Generate FastGECO corrector training data with extractor
 # stage=6 # Train FastGECO corrector
-# stage=7 # Evaluate compressor/extractor/corrector/system metrics
+stage=7 # Evaluate compressor/extractor/corrector/system metrics
 
 stop_stage=$stage
 
-# config=pretrained
-config=SoloSpeech
+config=pretrained
+# config=SoloSpeech
 librimix_sample_ratio=0.0001
 metrics=null
 eval_config=default
