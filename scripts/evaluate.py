@@ -360,6 +360,10 @@ def eval_log_every(cfg):
     return max(int(cfg.evaluation.get("log_every", 50)), 1)
 
 
+def save_audio_outputs(cfg):
+    return bool(cfg.evaluation.get("save_audio_outputs", False))
+
+
 def format_item_metrics(row):
     fields = []
     for key in sorted(row):
@@ -376,6 +380,11 @@ def format_item_metrics(row):
 def load_audio(path, sample_rate):
     audio, _ = librosa.load(path, sr=sample_rate, mono=True)
     return audio.astype(np.float32)
+
+
+def tensor_to_audio_array(audio):
+    audio = audio.detach().float().cpu().squeeze().clamp(-0.999, 0.999)
+    return audio.numpy().astype(np.float32)
 
 
 def trim_pair(reference, estimate):
@@ -437,15 +446,7 @@ class DNSMOS:
         p_bak = np.poly1d([-0.13166888, 1.60915514, -0.39604546])
         return p_sig(sig), p_bak(bak), p_ovr(ovr)
 
-    def __call__(self, wav_path, sample_rate):
-        import soundfile as sf
-
-        audio, input_rate = sf.read(wav_path)
-        if audio.ndim > 1:
-            audio = np.mean(audio, axis=1)
-        if input_rate != sample_rate:
-            audio = librosa.resample(audio, orig_sr=input_rate, target_sr=sample_rate)
-
+    def score_audio(self, audio, sample_rate):
         target_len = int(9.01 * sample_rate)
         while len(audio) < target_len:
             audio = np.append(audio, audio)
@@ -478,6 +479,16 @@ class DNSMOS:
             "dnsmos_p808": float(np.mean(p808_values)),
         }
 
+    def __call__(self, wav_path, sample_rate):
+        import soundfile as sf
+
+        audio, input_rate = sf.read(wav_path)
+        if audio.ndim > 1:
+            audio = np.mean(audio, axis=1)
+        if input_rate != sample_rate:
+            audio = librosa.resample(audio, orig_sr=input_rate, target_sr=sample_rate)
+        return self.score_audio(audio.astype(np.float32), sample_rate)
+
 
 class WERComputer:
     def __init__(self, cfg):
@@ -488,10 +499,13 @@ class WERComputer:
         self.wer_fn = wer
         self.normalizer = EnglishTextNormalizer()
         self.model = whisper.load_model(cfg.evaluation.whisper_model)
+        self.sample_rate = int(cfg.evaluation.sample_rate)
         self.transcripts = load_librispeech_transcripts(cfg)
 
-    def transcribe(self, wav_path):
-        result = self.model.transcribe(str(wav_path))
+    def transcribe(self, audio_or_path):
+        if isinstance(audio_or_path, (str, Path)):
+            audio_or_path = load_audio(audio_or_path, self.sample_rate)
+        result = self.model.transcribe(audio_or_path)
         return self.normalizer(result["text"].strip())
 
     def reference_text(self, source_path):
@@ -657,15 +671,6 @@ def decode_std_for(cfg, source_item, mix_item, reference_item):
     raise ValueError(f"Unsupported evaluation.extractor.decode_std: {decode_std}")
 
 
-def decode_compressor_outputs(cfg, pairs):
-    runtime = make_compressor_runtime(cfg)
-    required = []
-    for pair in pairs:
-        if decode_compressor_output(cfg, pair, runtime):
-            required.append(pair)
-    logger.info(f"Evaluate compressor: generated {len(required)}/{len(pairs)} files")
-
-
 def make_compressor_runtime(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return {
@@ -676,8 +681,12 @@ def make_compressor_runtime(cfg):
 
 
 def decode_compressor_output(cfg, pair, runtime):
-    pair["estimate"] = raw_output_path(cfg, "compressor", pair)
-    if pair["estimate"].is_file() and not cfg.evaluation.overwrite:
+    output_path = raw_output_path(cfg, "compressor", pair) if save_audio_outputs(cfg) else None
+    if output_path is not None:
+        pair["estimate"] = output_path
+    else:
+        pair.pop("estimate", None)
+    if output_path is not None and output_path.is_file() and not cfg.evaluation.overwrite:
         return False
 
     device = runtime["device"]
@@ -692,19 +701,10 @@ def decode_compressor_output(cfg, pair, runtime):
         encoded["num_samples"],
         device,
     )
-    save_audio(pair["estimate"], cfg.evaluation.sample_rate, audio.squeeze(0))
+    pair["estimate_audio"] = tensor_to_audio_array(audio)
+    if output_path is not None:
+        save_audio(output_path, cfg.evaluation.sample_rate, audio.squeeze(0))
     return True
-
-
-def decode_compressor_outputs_bulk(cfg, pairs):
-    runtime = make_compressor_runtime(cfg)
-    required = [pair for pair in pairs if not (raw_output_path(cfg, "compressor", pair).is_file() and not cfg.evaluation.overwrite)]
-    if not required:
-        for pair in pairs:
-            pair["estimate"] = raw_output_path(cfg, "compressor", pair)
-        return
-    for pair in progress_iter(required, "Evaluate compressor", eval_log_every(cfg)):
-        decode_compressor_output(cfg, pair, runtime)
 
 
 def load_autoencoder(cfg):
@@ -818,23 +818,13 @@ def sample_extractor_output(model, scheduler, mix_item, reference_item, cfg, dev
     return pred.squeeze(0).detach()
 
 
-def generate_extractor_outputs(cfg, pairs):
-    runtime = make_extractor_runtime(cfg)
-    required = []
-    for pair in pairs:
-        pair["estimate"] = raw_output_path(cfg, "extractor", pair)
-        if cfg.evaluation.overwrite or not pair["estimate"].is_file():
-            required.append(pair)
-    if not required:
-        return
-
-    for pair in progress_iter(required, "Run extractor", eval_log_every(cfg)):
-        generate_extractor_output(cfg, pair, runtime)
-
-
 def generate_extractor_output(cfg, pair, runtime):
-    pair["estimate"] = raw_output_path(cfg, "extractor", pair)
-    if pair["estimate"].is_file() and not cfg.evaluation.overwrite:
+    output_path = raw_output_path(cfg, "extractor", pair) if save_audio_outputs(cfg) else None
+    if output_path is not None:
+        pair["estimate"] = output_path
+    else:
+        pair.pop("estimate", None)
+    if output_path is not None and output_path.is_file() and not cfg.evaluation.overwrite:
         return False
     if "mix" not in pair:
         raise RuntimeError(f"Extractor evaluation requires mix for {pair['id']}")
@@ -860,7 +850,9 @@ def generate_extractor_output(cfg, pair, runtime):
         mix_item["num_samples"],
         device,
     )
-    save_audio(pair["estimate"], cfg.evaluation.sample_rate, audio.squeeze(0))
+    pair["estimate_audio"] = tensor_to_audio_array(audio)
+    if output_path is not None:
+        save_audio(output_path, cfg.evaluation.sample_rate, audio.squeeze(0))
     return True
 
 
@@ -892,27 +884,17 @@ def make_corrector_runtime(cfg):
     return {"device": device, "model": model, "pad_spec": pad_spec}
 
 
-def run_corrector_outputs(cfg, pairs):
-    runtime = make_corrector_runtime(cfg)
-    required = []
-    for pair in pairs:
-        output_path = pair.get("system_estimate") or get_system_output_path(cfg, pair)
-        pair["system_estimate"] = output_path
-        if cfg.evaluation.overwrite or not output_path.is_file():
-            required.append(pair)
-    if not required:
-        return
-
-    for pair in progress_iter(required, "Run corrector", eval_log_every(cfg)):
-        run_corrector_output(cfg, pair, runtime)
-
-
 def run_corrector_output(cfg, pair, runtime):
-    output_path = pair.get("system_estimate") or get_system_output_path(cfg, pair)
-    pair["system_estimate"] = output_path
-    if output_path.is_file() and not cfg.evaluation.overwrite:
+    output_path = pair.get("system_estimate") if save_audio_outputs(cfg) else None
+    if output_path is None and save_audio_outputs(cfg):
+        output_path = get_system_output_path(cfg, pair)
+    if output_path is not None:
+        pair["system_estimate"] = output_path
+    else:
+        pair.pop("system_estimate", None)
+    if output_path is not None and output_path.is_file() and not cfg.evaluation.overwrite:
         return False
-    if "estimate" not in pair or "mix" not in pair:
+    if "mix" not in pair or ("estimate_audio" not in pair and "estimate" not in pair):
         raise RuntimeError(
             f"Cannot run corrector for {pair['id']}: evaluation must have generated extractor estimate and manifest must provide mix."
         )
@@ -920,7 +902,10 @@ def run_corrector_output(cfg, pair, runtime):
     device = runtime["device"]
     model = runtime["model"]
     pad_spec = runtime["pad_spec"]
-    estimate = torch.from_numpy(load_audio(pair["estimate"], cfg.evaluation.sample_rate)).unsqueeze(0).to(device)
+    estimate_audio = pair.get("estimate_audio")
+    if estimate_audio is None:
+        estimate_audio = load_audio(pair["estimate"], cfg.evaluation.sample_rate)
+    estimate = torch.from_numpy(estimate_audio).unsqueeze(0).to(device)
     mixture = torch.from_numpy(load_audio(pair["mix"], cfg.evaluation.sample_rate)).unsqueeze(0).to(device)
     length = min(estimate.shape[-1], mixture.shape[-1])
     estimate = estimate[..., :length]
@@ -951,7 +936,9 @@ def run_corrector_output(cfg, pair, runtime):
             else:
                 x_t = mean_x_tm1 + torch.randn_like(x_t) * g * torch.sqrt(dt)
         audio = model.to_audio(x_t.squeeze(), length) * norm_factor
-    save_audio(output_path, cfg.evaluation.sample_rate, audio)
+    pair["system_audio"] = tensor_to_audio_array(audio)
+    if output_path is not None:
+        save_audio(output_path, cfg.evaluation.sample_rate, audio)
     return True
 
 
@@ -959,13 +946,18 @@ def compute_row(cfg, category, pair, metrics, dnsmos=None, wer=None):
     sample_rate = cfg.evaluation.sample_rate
     if category in ("corrector", "system"):
         estimate_path = pair.get("system_estimate") or pair.get("estimate")
+        generated_audio = pair.get("system_audio")
+        if generated_audio is None:
+            generated_audio = pair.get("estimate_audio")
     else:
         estimate_path = pair.get("estimate")
-    if estimate_path is None:
+        generated_audio = pair.get("estimate_audio")
+    if estimate_path is None and generated_audio is None:
         logger.warning(f"Skip {pair['id']}: no estimate path for {category}")
         return None
 
-    row = {"id": pair["id"], "source": str(pair["source"]), "estimate": str(estimate_path)}
+    estimate_label = str(estimate_path) if estimate_path is not None else "memory"
+    row = {"id": pair["id"], "source": str(pair["source"]), "estimate": estimate_label}
     reference_audio = None
     estimate_audio = None
 
@@ -973,7 +965,7 @@ def compute_row(cfg, category, pair, metrics, dnsmos=None, wer=None):
         nonlocal reference_audio, estimate_audio
         if reference_audio is None:
             reference_audio = load_audio(pair["source"], sample_rate)
-            estimate_audio = load_audio(estimate_path, sample_rate)
+            estimate_audio = generated_audio if generated_audio is not None else load_audio(estimate_path, sample_rate)
 
     for metric in metrics:
         name = metric_name(metric)
@@ -988,13 +980,17 @@ def compute_row(cfg, category, pair, metrics, dnsmos=None, wer=None):
                 ensure_audio()
                 row[name] = compute_estoi(reference_audio, estimate_audio, sample_rate)
             elif name == "dnsmos":
-                row.update(dnsmos(estimate_path, sample_rate))
+                if generated_audio is not None:
+                    row.update(dnsmos.score_audio(generated_audio, sample_rate))
+                else:
+                    row.update(dnsmos(estimate_path, sample_rate))
             elif name == "wer":
-                row[name] = wer(pair["source"], estimate_path, pair.get("transcript"))
+                hypothesis_audio = generated_audio if generated_audio is not None else estimate_path
+                row[name] = wer(pair["source"], hypothesis_audio, pair.get("transcript"))
             else:
                 raise ValueError(f"Unsupported metric: {metric}")
         except Exception as exc:
-            logger.warning(f"{metric} failed for {estimate_path}: {exc}")
+            logger.warning(f"{metric} failed for {estimate_label}: {exc}")
             row[name] = float("nan")
 
     logger.info(f"{category} item {pair['id']}: {format_item_metrics(row)}")

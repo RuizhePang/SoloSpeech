@@ -10,6 +10,7 @@ split: test
 sample_rate: 16000
 max_items: null
 overwrite: false
+save_audio_outputs: false
 whisper_model: large-v3-turbo
 dnsmos_num_threads: 1
 log_every: 50
