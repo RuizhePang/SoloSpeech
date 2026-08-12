@@ -39,12 +39,11 @@ stop_stage=$stage
 
 config=pretrained
 # config=SoloSpeech
-librimix_sample_ratio=0.0001
-metrics=null
 
 eval_config=default
-eval_config=save_audio
+# eval_config=save_audio
 
+metrics=null
 test_dir=null
 test_manifest=null
 
@@ -74,7 +73,7 @@ if [[ $stage -le 0 && $stop_stage -ge 0 ]]; then
         "16k" \
         "min" \
         "mix_clean mix_both" \
-        "$librimix_sample_ratio"
+        "1.0"
 fi
 
 if [[ $stage -le 1 && $stop_stage -ge 1 ]]; then
