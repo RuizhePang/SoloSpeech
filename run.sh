@@ -35,7 +35,8 @@ fi
 # stage=5 # Generate FastGECO corrector training data with extractor
 # stage=6 # Train FastGECO corrector
 # stage=7 # Evaluate compressor/extractor/corrector/system metrics
-stage=8 # Download and prepare LibriCSS test data
+# stage=8 # Download and prepare LibriCSS test data
+stage=9 # Download and prepare CHiME-6 eval data
 
 stop_stage=$stage
 
@@ -193,5 +194,15 @@ if [[ $stage -le 8 && $stop_stage -ge 8 ]]; then
         "$data_dir/LibriCSS" \
         "$PYTHON_BIN" \
         "0" \
+        "0"
+fi
+
+if [[ $stage -le 9 && $stop_stage -ge 9 ]]; then
+    echo "Stage 9: downloading/preparing CHiME-6 eval data into $data_dir/CHiME6"
+    bash scripts/prepare_CHiME6.sh \
+        "$data_dir/CHiME6" \
+        "$PYTHON_BIN" \
+        "U01" \
+        "CH1" \
         "0"
 fi
