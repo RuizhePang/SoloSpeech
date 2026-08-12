@@ -1,5 +1,5 @@
-git+https://github.com/descriptinc/audiotools
-git+https://github.com/WangHelin1997/Fast-GeCo.git#subdirectory=score_models
+descript-audiotools
+# git+https://github.com/WangHelin1997/Fast-GeCo.git#subdirectory=score_models
 pytorch-lightning==2.4.0
 torch==2.4.1
 torch-ema==0.3
