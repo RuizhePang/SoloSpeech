@@ -373,6 +373,13 @@ def format_item_metrics(row):
     return ", ".join(fields) if fields else "no metrics"
 
 
+def log_item_metric(category, item_id, key, value):
+    if isinstance(value, float):
+        logger.info(f"{category} item {item_id}: {key}={value:.4f}")
+    else:
+        logger.info(f"{category} item {item_id}: {key}={value}")
+
+
 def load_audio(path, sample_rate):
     audio, _ = librosa.load(path, sr=sample_rate, mono=True)
     return audio.astype(np.float32)
@@ -904,6 +911,7 @@ def compute_rows(cfg, category, pairs, metrics, dnsmos=None, wer=None):
             logger.warning(f"Skip {pair['id']}: no estimate path for {category}")
             continue
         row = {"id": pair["id"], "source": str(pair["source"]), "estimate": str(estimate_path)}
+        logger.info(f"{category} item {pair['id']}: evaluating")
         reference_audio = None
         estimate_audio = None
 
@@ -919,21 +927,28 @@ def compute_rows(cfg, category, pairs, metrics, dnsmos=None, wer=None):
                 if name == "sisdr":
                     ensure_audio()
                     row[name] = si_sdr(estimate_audio, reference_audio)
+                    log_item_metric(category, pair["id"], name, row[name])
                 elif name == "pesq":
                     ensure_audio()
                     row[name] = compute_pesq(reference_audio, estimate_audio, sample_rate)
+                    log_item_metric(category, pair["id"], name, row[name])
                 elif name == "estoi":
                     ensure_audio()
                     row[name] = compute_estoi(reference_audio, estimate_audio, sample_rate)
+                    log_item_metric(category, pair["id"], name, row[name])
                 elif name == "dnsmos":
                     row.update(dnsmos(estimate_path, sample_rate))
+                    for key in ("dnsmos_sig", "dnsmos_bak", "dnsmos_ovrl", "dnsmos_p808"):
+                        log_item_metric(category, pair["id"], key, row[key])
                 elif name == "wer":
                     row[name] = wer(pair["source"], estimate_path, pair.get("transcript"))
+                    log_item_metric(category, pair["id"], name, row[name])
                 else:
                     raise ValueError(f"Unsupported metric: {metric}")
             except Exception as exc:
                 logger.warning(f"{metric} failed for {estimate_path}: {exc}")
                 row[name] = float("nan")
+                log_item_metric(category, pair["id"], name, row[name])
         logger.info(f"{category} item {pair['id']}: {format_item_metrics(row)}")
         rows.append(row)
     return rows
