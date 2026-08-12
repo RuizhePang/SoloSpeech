@@ -19,7 +19,7 @@ METRIC_GROUPS = {
     "compressor": ["compressor_sisdr", "compressor_pesq", "compressor_estoi"],
     "extractor": ["extractor_sisdr", "extractor_pesq", "extractor_estoi"],
     "corrector": ["corrector_sisdr", "corrector_pesq", "corrector_estoi"],
-    "system": ["system_wer", "system_sisdr", "system_dnsmos"],
+    "system": ["system_sisdr", "system_dnsmos", "system_wer"],
 }
 METRIC_GROUPS["all"] = [
     metric
@@ -373,13 +373,6 @@ def format_item_metrics(row):
     return ", ".join(fields) if fields else "no metrics"
 
 
-def log_item_metric(category, item_id, key, value):
-    if isinstance(value, float):
-        logger.info(f"{category} item {item_id}: {key}={value:.4f}")
-    else:
-        logger.info(f"{category} item {item_id}: {key}={value}")
-
-
 def load_audio(path, sample_rate):
     audio, _ = librosa.load(path, sr=sample_rate, mono=True)
     return audio.astype(np.float32)
@@ -665,27 +658,53 @@ def decode_std_for(cfg, source_item, mix_item, reference_item):
 
 
 def decode_compressor_outputs(cfg, pairs):
+    runtime = make_compressor_runtime(cfg)
+    required = []
     for pair in pairs:
-        pair["estimate"] = raw_output_path(cfg, "compressor", pair)
+        if decode_compressor_output(cfg, pair, runtime):
+            required.append(pair)
+    logger.info(f"Evaluate compressor: generated {len(required)}/{len(pairs)} files")
 
-    required = [pair for pair in pairs if cfg.evaluation.overwrite or not pair["estimate"].is_file()]
-    if not required:
-        return
 
+def make_compressor_runtime(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    autoencoder = load_autoencoder(cfg).to(device)
-    model_type = cfg.compressor.model_type
+    return {
+        "device": device,
+        "autoencoder": load_autoencoder(cfg).to(device),
+        "model_type": cfg.compressor.model_type,
+    }
+
+
+def decode_compressor_output(cfg, pair, runtime):
+    pair["estimate"] = raw_output_path(cfg, "compressor", pair)
+    if pair["estimate"].is_file() and not cfg.evaluation.overwrite:
+        return False
+
+    device = runtime["device"]
+    autoencoder = runtime["autoencoder"]
+    model_type = runtime["model_type"]
+    encoded = encode_audio(autoencoder, pair["source"], cfg.evaluation.sample_rate, device, model_type)
+    audio = decode_latent(
+        autoencoder,
+        encoded["latent"],
+        encoded["std"],
+        model_type,
+        encoded["num_samples"],
+        device,
+    )
+    save_audio(pair["estimate"], cfg.evaluation.sample_rate, audio.squeeze(0))
+    return True
+
+
+def decode_compressor_outputs_bulk(cfg, pairs):
+    runtime = make_compressor_runtime(cfg)
+    required = [pair for pair in pairs if not (raw_output_path(cfg, "compressor", pair).is_file() and not cfg.evaluation.overwrite)]
+    if not required:
+        for pair in pairs:
+            pair["estimate"] = raw_output_path(cfg, "compressor", pair)
+        return
     for pair in progress_iter(required, "Evaluate compressor", eval_log_every(cfg)):
-        encoded = encode_audio(autoencoder, pair["source"], cfg.evaluation.sample_rate, device, model_type)
-        audio = decode_latent(
-            autoencoder,
-            encoded["latent"],
-            encoded["std"],
-            model_type,
-            encoded["num_samples"],
-            device,
-        )
-        save_audio(pair["estimate"], cfg.evaluation.sample_rate, audio.squeeze(0))
+        decode_compressor_output(cfg, pair, runtime)
 
 
 def load_autoencoder(cfg):
@@ -759,6 +778,17 @@ def make_extractor_scheduler(cfg):
     return scheduler
 
 
+def make_extractor_runtime(cfg):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return {
+        "device": device,
+        "autoencoder": load_autoencoder(cfg).to(device),
+        "extractor": load_extractor(cfg).to(device),
+        "scheduler": make_extractor_scheduler(cfg),
+        "model_type": cfg.compressor.model_type,
+    }
+
+
 @torch.no_grad()
 def sample_extractor_output(model, scheduler, mix_item, reference_item, cfg, device):
     mixture = mix_item["latent"].unsqueeze(0).to(device)
@@ -789,36 +819,49 @@ def sample_extractor_output(model, scheduler, mix_item, reference_item, cfg, dev
 
 
 def generate_extractor_outputs(cfg, pairs):
+    runtime = make_extractor_runtime(cfg)
+    required = []
     for pair in pairs:
         pair["estimate"] = raw_output_path(cfg, "extractor", pair)
-
-    required = [pair for pair in pairs if cfg.evaluation.overwrite or not pair["estimate"].is_file()]
+        if cfg.evaluation.overwrite or not pair["estimate"].is_file():
+            required.append(pair)
     if not required:
         return
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    autoencoder = load_autoencoder(cfg).to(device)
-    extractor = load_extractor(cfg).to(device)
-    scheduler = make_extractor_scheduler(cfg)
-    model_type = cfg.compressor.model_type
-
     for pair in progress_iter(required, "Run extractor", eval_log_every(cfg)):
-        if "mix" not in pair:
-            raise RuntimeError(f"Extractor evaluation requires mix for {pair['id']}")
-        reference_path = pair.get("reference") or pair["source"]
-        source_item = encode_audio(autoencoder, pair["source"], cfg.evaluation.sample_rate, device, model_type)
-        mix_item = encode_audio(autoencoder, pair["mix"], cfg.evaluation.sample_rate, device, model_type)
-        reference_item = encode_audio(autoencoder, reference_path, cfg.evaluation.sample_rate, device, model_type)
-        pred = sample_extractor_output(extractor, scheduler, mix_item, reference_item, cfg, device)
-        audio = decode_latent(
-            autoencoder,
-            pred,
-            decode_std_for(cfg, source_item, mix_item, reference_item),
-            model_type,
-            mix_item["num_samples"],
-            device,
-        )
-        save_audio(pair["estimate"], cfg.evaluation.sample_rate, audio.squeeze(0))
+        generate_extractor_output(cfg, pair, runtime)
+
+
+def generate_extractor_output(cfg, pair, runtime):
+    pair["estimate"] = raw_output_path(cfg, "extractor", pair)
+    if pair["estimate"].is_file() and not cfg.evaluation.overwrite:
+        return False
+    if "mix" not in pair:
+        raise RuntimeError(f"Extractor evaluation requires mix for {pair['id']}")
+
+    device = runtime["device"]
+    autoencoder = runtime["autoencoder"]
+    extractor = runtime["extractor"]
+    scheduler = runtime["scheduler"]
+    model_type = runtime["model_type"]
+    reference_path = pair.get("reference") or pair["source"]
+
+    source_item = encode_audio(autoencoder, pair["source"], cfg.evaluation.sample_rate, device, model_type)
+    mix_item = encode_audio(autoencoder, pair["mix"], cfg.evaluation.sample_rate, device, model_type)
+    reference_item = encode_audio(autoencoder, reference_path, cfg.evaluation.sample_rate, device, model_type)
+
+    pred = sample_extractor_output(extractor, scheduler, mix_item, reference_item, cfg, device)
+
+    audio = decode_latent(
+        autoencoder,
+        pred,
+        decode_std_for(cfg, source_item, mix_item, reference_item),
+        model_type,
+        mix_item["num_samples"],
+        device,
+    )
+    save_audio(pair["estimate"], cfg.evaluation.sample_rate, audio.squeeze(0))
+    return True
 
 
 def save_audio(path, sample_rate, audio):
@@ -838,24 +881,7 @@ def resolve_corrector_ckpt(cfg):
     return Path(cfg.save_dir) / "corrector" / cfg.corrector.checkpoint.ckpt_dir / "corrector.ckpt"
 
 
-def run_corrector_outputs(cfg, pairs):
-    required = []
-    for pair in pairs:
-        output_path = pair.get("system_estimate") or get_system_output_path(cfg, pair)
-        pair["system_estimate"] = output_path
-        if output_path.is_file() and not cfg.evaluation.overwrite:
-            continue
-        if "estimate" not in pair or "mix" not in pair:
-            if output_path.is_file():
-                continue
-            raise RuntimeError(
-                f"Cannot run corrector for {pair['id']}: evaluation must have generated extractor estimate and manifest must provide mix."
-            )
-        if cfg.evaluation.overwrite or not output_path.is_file():
-            required.append((pair, output_path))
-    if not required:
-        return
-
+def make_corrector_runtime(cfg):
     from solospeech.corrector.fastgeco.model import ScoreModel
     from solospeech.corrector.geco.util.other import pad_spec
 
@@ -863,94 +889,154 @@ def run_corrector_outputs(cfg, pairs):
     model = ScoreModel.load_from_checkpoint(str(resolve_corrector_ckpt(cfg)), batch_size=1, num_workers=0, kwargs={"gpu": False})
     model.eval(no_ema=False)
     model.to(device)
+    return {"device": device, "model": model, "pad_spec": pad_spec}
 
-    for pair, output_path in progress_iter(required, "Run corrector", eval_log_every(cfg)):
-        estimate = torch.from_numpy(load_audio(pair["estimate"], cfg.evaluation.sample_rate)).unsqueeze(0).to(device)
-        mixture = torch.from_numpy(load_audio(pair["mix"], cfg.evaluation.sample_rate)).unsqueeze(0).to(device)
-        length = min(estimate.shape[-1], mixture.shape[-1])
-        estimate = estimate[..., :length]
-        mixture = mixture[..., :length]
-        norm_factor = mixture.abs().max().clamp_min(1e-8)
-        estimate_norm = estimate / norm_factor
-        mixture_norm = mixture / norm_factor
 
-        y = pad_spec(torch.unsqueeze(model._forward_transform(model._stft(estimate_norm)), 0))
-        m = pad_spec(torch.unsqueeze(model._forward_transform(model._stft(mixture_norm)), 0))
-        timesteps = torch.linspace(
-            cfg.evaluation.corrector.reverse_starting_point,
-            model.t_eps,
-            cfg.evaluation.corrector.num_steps,
-            device=device,
+def run_corrector_outputs(cfg, pairs):
+    runtime = make_corrector_runtime(cfg)
+    required = []
+    for pair in pairs:
+        output_path = pair.get("system_estimate") or get_system_output_path(cfg, pair)
+        pair["system_estimate"] = output_path
+        if cfg.evaluation.overwrite or not output_path.is_file():
+            required.append(pair)
+    if not required:
+        return
+
+    for pair in progress_iter(required, "Run corrector", eval_log_every(cfg)):
+        run_corrector_output(cfg, pair, runtime)
+
+
+def run_corrector_output(cfg, pair, runtime):
+    output_path = pair.get("system_estimate") or get_system_output_path(cfg, pair)
+    pair["system_estimate"] = output_path
+    if output_path.is_file() and not cfg.evaluation.overwrite:
+        return False
+    if "estimate" not in pair or "mix" not in pair:
+        raise RuntimeError(
+            f"Cannot run corrector for {pair['id']}: evaluation must have generated extractor estimate and manifest must provide mix."
         )
-        std = model.sde._std(cfg.evaluation.corrector.reverse_starting_point * torch.ones((m.shape[0],), device=device))
-        x_t = m + torch.randn_like(m) * std[:, None, None, None]
-        with torch.no_grad():
-            for idx, timestep in enumerate(timesteps):
-                dt = timestep - timesteps[idx + 1] if idx != len(timesteps) - 1 else timesteps[-1]
-                f, g = model.sde.sde(x_t, timestep, m)
-                vec_t = torch.ones(m.shape[0], device=device) * timestep
-                score = model.forward(x_t, vec_t, m, y, vec_t[:, None, None, None])
-                mean_x_tm1 = x_t - (f - g**2 * score) * dt
-                if idx == len(timesteps) - 1:
-                    x_t = mean_x_tm1
-                else:
-                    x_t = mean_x_tm1 + torch.randn_like(x_t) * g * torch.sqrt(dt)
-            audio = model.to_audio(x_t.squeeze(), length) * norm_factor
-        save_audio(output_path, cfg.evaluation.sample_rate, audio)
+
+    device = runtime["device"]
+    model = runtime["model"]
+    pad_spec = runtime["pad_spec"]
+    estimate = torch.from_numpy(load_audio(pair["estimate"], cfg.evaluation.sample_rate)).unsqueeze(0).to(device)
+    mixture = torch.from_numpy(load_audio(pair["mix"], cfg.evaluation.sample_rate)).unsqueeze(0).to(device)
+    length = min(estimate.shape[-1], mixture.shape[-1])
+    estimate = estimate[..., :length]
+    mixture = mixture[..., :length]
+    norm_factor = mixture.abs().max().clamp_min(1e-8)
+    estimate_norm = estimate / norm_factor
+    mixture_norm = mixture / norm_factor
+
+    y = pad_spec(torch.unsqueeze(model._forward_transform(model._stft(estimate_norm)), 0))
+    m = pad_spec(torch.unsqueeze(model._forward_transform(model._stft(mixture_norm)), 0))
+    timesteps = torch.linspace(
+        cfg.evaluation.corrector.reverse_starting_point,
+        model.t_eps,
+        cfg.evaluation.corrector.num_steps,
+        device=device,
+    )
+    std = model.sde._std(cfg.evaluation.corrector.reverse_starting_point * torch.ones((m.shape[0],), device=device))
+    x_t = m + torch.randn_like(m) * std[:, None, None, None]
+    with torch.no_grad():
+        for idx, timestep in enumerate(timesteps):
+            dt = timestep - timesteps[idx + 1] if idx != len(timesteps) - 1 else timesteps[-1]
+            f, g = model.sde.sde(x_t, timestep, m)
+            vec_t = torch.ones(m.shape[0], device=device) * timestep
+            score = model.forward(x_t, vec_t, m, y, vec_t[:, None, None, None])
+            mean_x_tm1 = x_t - (f - g**2 * score) * dt
+            if idx == len(timesteps) - 1:
+                x_t = mean_x_tm1
+            else:
+                x_t = mean_x_tm1 + torch.randn_like(x_t) * g * torch.sqrt(dt)
+        audio = model.to_audio(x_t.squeeze(), length) * norm_factor
+    save_audio(output_path, cfg.evaluation.sample_rate, audio)
+    return True
+
+
+def compute_row(cfg, category, pair, metrics, dnsmos=None, wer=None):
+    sample_rate = cfg.evaluation.sample_rate
+    if category in ("corrector", "system"):
+        estimate_path = pair.get("system_estimate") or pair.get("estimate")
+    else:
+        estimate_path = pair.get("estimate")
+    if estimate_path is None:
+        logger.warning(f"Skip {pair['id']}: no estimate path for {category}")
+        return None
+
+    row = {"id": pair["id"], "source": str(pair["source"]), "estimate": str(estimate_path)}
+    reference_audio = None
+    estimate_audio = None
+
+    def ensure_audio():
+        nonlocal reference_audio, estimate_audio
+        if reference_audio is None:
+            reference_audio = load_audio(pair["source"], sample_rate)
+            estimate_audio = load_audio(estimate_path, sample_rate)
+
+    for metric in metrics:
+        name = metric_name(metric)
+        try:
+            if name == "sisdr":
+                ensure_audio()
+                row[name] = si_sdr(estimate_audio, reference_audio)
+            elif name == "pesq":
+                ensure_audio()
+                row[name] = compute_pesq(reference_audio, estimate_audio, sample_rate)
+            elif name == "estoi":
+                ensure_audio()
+                row[name] = compute_estoi(reference_audio, estimate_audio, sample_rate)
+            elif name == "dnsmos":
+                row.update(dnsmos(estimate_path, sample_rate))
+            elif name == "wer":
+                row[name] = wer(pair["source"], estimate_path, pair.get("transcript"))
+            else:
+                raise ValueError(f"Unsupported metric: {metric}")
+        except Exception as exc:
+            logger.warning(f"{metric} failed for {estimate_path}: {exc}")
+            row[name] = float("nan")
+
+    logger.info(f"{category} item {pair['id']}: {format_item_metrics(row)}")
+    return row
 
 
 def compute_rows(cfg, category, pairs, metrics, dnsmos=None, wer=None):
     rows = []
-    sample_rate = cfg.evaluation.sample_rate
     for pair in progress_iter(pairs, f"Evaluate {category}", eval_log_every(cfg)):
-        if category in ("corrector", "system"):
-            estimate_path = pair.get("system_estimate") or pair.get("estimate")
+        row = compute_row(cfg, category, pair, metrics, dnsmos=dnsmos, wer=wer)
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+def run_category_pipeline(
+    cfg,
+    category,
+    pairs,
+    metrics,
+    dnsmos=None,
+    wer=None,
+    compressor_runtime=None,
+    extractor_runtime=None,
+    corrector_runtime=None,
+):
+    rows = []
+    label = f"Evaluate {category} pipeline"
+    for pair in progress_iter(pairs, label, eval_log_every(cfg)):
+        if category == "compressor":
+            decode_compressor_output(cfg, pair, compressor_runtime)
+        elif category == "extractor":
+            generate_extractor_output(cfg, pair, extractor_runtime)
+        elif category in ("corrector", "system"):
+            generate_extractor_output(cfg, pair, extractor_runtime)
+            run_corrector_output(cfg, pair, corrector_runtime)
         else:
-            estimate_path = pair.get("estimate")
-        if estimate_path is None:
-            logger.warning(f"Skip {pair['id']}: no estimate path for {category}")
-            continue
-        row = {"id": pair["id"], "source": str(pair["source"]), "estimate": str(estimate_path)}
-        logger.info(f"{category} item {pair['id']}: evaluating")
-        reference_audio = None
-        estimate_audio = None
+            raise ValueError(f"Unsupported evaluation category: {category}")
 
-        def ensure_audio():
-            nonlocal reference_audio, estimate_audio
-            if reference_audio is None:
-                reference_audio = load_audio(pair["source"], sample_rate)
-                estimate_audio = load_audio(estimate_path, sample_rate)
-
-        for metric in metrics:
-            name = metric_name(metric)
-            try:
-                if name == "sisdr":
-                    ensure_audio()
-                    row[name] = si_sdr(estimate_audio, reference_audio)
-                    log_item_metric(category, pair["id"], name, row[name])
-                elif name == "pesq":
-                    ensure_audio()
-                    row[name] = compute_pesq(reference_audio, estimate_audio, sample_rate)
-                    log_item_metric(category, pair["id"], name, row[name])
-                elif name == "estoi":
-                    ensure_audio()
-                    row[name] = compute_estoi(reference_audio, estimate_audio, sample_rate)
-                    log_item_metric(category, pair["id"], name, row[name])
-                elif name == "dnsmos":
-                    row.update(dnsmos(estimate_path, sample_rate))
-                    for key in ("dnsmos_sig", "dnsmos_bak", "dnsmos_ovrl", "dnsmos_p808"):
-                        log_item_metric(category, pair["id"], key, row[key])
-                elif name == "wer":
-                    row[name] = wer(pair["source"], estimate_path, pair.get("transcript"))
-                    log_item_metric(category, pair["id"], name, row[name])
-                else:
-                    raise ValueError(f"Unsupported metric: {metric}")
-            except Exception as exc:
-                logger.warning(f"{metric} failed for {estimate_path}: {exc}")
-                row[name] = float("nan")
-                log_item_metric(category, pair["id"], name, row[name])
-        logger.info(f"{category} item {pair['id']}: {format_item_metrics(row)}")
-        rows.append(row)
+        row = compute_row(cfg, category, pair, metrics, dnsmos=dnsmos, wer=wer)
+        if row is not None:
+            rows.append(row)
     return rows
 
 
@@ -1004,34 +1090,62 @@ def main(cfg: DictConfig):
         compressor_pairs = get_compressor_audio_pairs(cfg)
         if max_items:
             compressor_pairs = compressor_pairs[:max_items]
-        decode_compressor_outputs(cfg, compressor_pairs)
-        rows = compute_rows(cfg, "compressor", compressor_pairs, by_category["compressor"], dnsmos=dnsmos, wer=wer)
+        rows = run_category_pipeline(
+            cfg,
+            "compressor",
+            compressor_pairs,
+            by_category["compressor"],
+            dnsmos=dnsmos,
+            wer=wer,
+            compressor_runtime=make_compressor_runtime(cfg),
+        )
         write_results(cfg, "compressor", rows)
 
     if "extractor" in by_category:
         extractor_pairs = get_extractor_audio_pairs(cfg)
         if max_items:
             extractor_pairs = extractor_pairs[:max_items]
-        generate_extractor_outputs(cfg, extractor_pairs)
-        rows = compute_rows(cfg, "extractor", extractor_pairs, by_category["extractor"], dnsmos=dnsmos, wer=wer)
+        rows = run_category_pipeline(
+            cfg,
+            "extractor",
+            extractor_pairs,
+            by_category["extractor"],
+            dnsmos=dnsmos,
+            wer=wer,
+            extractor_runtime=make_extractor_runtime(cfg),
+        )
         write_results(cfg, "extractor", rows)
 
     if "corrector" in by_category:
         corrector_pairs = get_corrector_audio_pairs(cfg)
         if max_items:
             corrector_pairs = corrector_pairs[:max_items]
-        generate_extractor_outputs(cfg, corrector_pairs)
-        run_corrector_outputs(cfg, corrector_pairs)
-        rows = compute_rows(cfg, "corrector", corrector_pairs, by_category["corrector"], dnsmos=dnsmos, wer=wer)
+        rows = run_category_pipeline(
+            cfg,
+            "corrector",
+            corrector_pairs,
+            by_category["corrector"],
+            dnsmos=dnsmos,
+            wer=wer,
+            extractor_runtime=make_extractor_runtime(cfg),
+            corrector_runtime=make_corrector_runtime(cfg),
+        )
         write_results(cfg, "corrector", rows)
 
     if "system" in by_category:
         system_pairs = get_system_audio_pairs(cfg)
         if max_items:
             system_pairs = system_pairs[:max_items]
-        generate_extractor_outputs(cfg, system_pairs)
-        run_corrector_outputs(cfg, system_pairs)
-        rows = compute_rows(cfg, "system", system_pairs, by_category["system"], dnsmos=dnsmos, wer=wer)
+        rows = run_category_pipeline(
+            cfg,
+            "system",
+            system_pairs,
+            by_category["system"],
+            dnsmos=dnsmos,
+            wer=wer,
+            extractor_runtime=make_extractor_runtime(cfg),
+            corrector_runtime=make_corrector_runtime(cfg),
+        )
         write_results(cfg, "system", rows)
 
 
