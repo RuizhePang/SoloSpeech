@@ -276,19 +276,20 @@ def get_manifest_audio_pairs(cfg, category):
 
         for source_idx in manifest_source_indices(row, category):
             source_path = source_for(row, category, source_idx, cfg, manifest_dir)
-            if source_path is None:
-                continue
-
             item_id = value_for(row, "id", "utt_id", "uid", "key", "name", "mixture_id", "sample_id")
             if item_id is None:
-                item_id = source_path.stem
+                mix_path_for_id = mix_for(row, category, source_idx, cfg, manifest_dir)
+                if mix_path_for_id is None:
+                    continue
+                item_id = mix_path_for_id.stem if source_path is None else source_path.stem
             if source_idx is not None:
                 item_id = f"{item_id}_source{source_idx}"
 
             pair = {
                 "id": str(item_id),
-                "source": source_path,
             }
+            if source_path is not None:
+                pair["source"] = source_path
             mix_path = mix_for(row, category, source_idx, cfg, manifest_dir)
             reference_path = reference_for(row, category, source_idx, cfg, manifest_dir)
             if mix_path is not None:
@@ -503,6 +504,8 @@ class WERComputer:
         return self.normalizer(result["text"].strip())
 
     def reference_text(self, source_path):
+        if source_path is None:
+            raise RuntimeError("WER requires transcript when source audio is not provided")
         utt_id = infer_librispeech_utt_id(source_path)
         if utt_id and utt_id in self.transcripts:
             return self.normalizer(self.transcripts[utt_id])
@@ -717,6 +720,8 @@ def decode_latent(autoencoder, latent, std, model_type, num_samples, device):
 def decode_std_for(cfg, source_item, mix_item, reference_item):
     decode_std = str(cfg.evaluation.extractor.get("decode_std", "mixture"))
     if decode_std == "source":
+        if source_item is None:
+            raise RuntimeError("evaluation.extractor.decode_std=source requires source audio")
         return source_item["std"]
     if decode_std == "reference":
         return reference_item["std"]
@@ -877,7 +882,7 @@ def generate_extractor_output(cfg, pair, runtime):
         raise RuntimeError(f"Extractor evaluation requires enrollment/reference for {pair['id']}")
     reference_path = pair["reference"]
 
-    source_item = encode_audio(autoencoder, pair["source"], cfg.evaluation.sample_rate, device, model_type)
+    source_item = encode_audio(autoencoder, pair["source"], cfg.evaluation.sample_rate, device, model_type) if pair.get("source") is not None else None
     mix_item = encode_audio(autoencoder, pair["mix"], cfg.evaluation.sample_rate, device, model_type)
     reference_item = encode_audio(autoencoder, reference_path, cfg.evaluation.sample_rate, device, model_type)
 
@@ -948,7 +953,8 @@ def maybe_limit_pairs(cfg, pairs, category):
 def save_demo_audio_bundle(cfg, category, pair):
     output_dir = audio_sample_dir(cfg, category, pair)
     sample_rate = cfg.evaluation.sample_rate
-    save_audio_array(output_dir / "ground_truth.wav", sample_rate, load_audio(pair["source"], sample_rate))
+    if pair.get("source") is not None:
+        save_audio_array(output_dir / "ground_truth.wav", sample_rate, load_audio(pair["source"], sample_rate))
 
     if pair.get("mix") is not None:
         save_audio_array(output_dir / "mixture.wav", sample_rate, load_audio(pair["mix"], sample_rate))
@@ -972,7 +978,7 @@ def ensure_demo_transcripts(category, pair, wer):
         generated_audio = pair.get("system_audio") if category in ("corrector", "system") else pair.get("estimate_audio")
         if generated_audio is not None:
             reference_text, hypothesis_text, _ = wer.texts(
-                pair["source"],
+                pair.get("source"),
                 generated_audio,
                 pair.get("transcript"),
             )
@@ -1065,13 +1071,15 @@ def compute_row(cfg, category, pair, metrics, dnsmos=None, wer=None, item_index=
         return None
 
     estimate_label = str(estimate_path) if estimate_path is not None else "memory"
-    row = {"id": pair["id"], "source": str(pair["source"]), "estimate": estimate_label}
+    row = {"id": pair["id"], "source": str(pair["source"]) if pair.get("source") is not None else "", "estimate": estimate_label}
     reference_audio = None
     estimate_audio = None
 
     def ensure_audio():
         nonlocal reference_audio, estimate_audio
         if reference_audio is None:
+            if pair.get("source") is None:
+                raise RuntimeError(f"{metric} requires source audio for {pair['id']}")
             reference_audio = load_audio(pair["source"], sample_rate)
             estimate_audio = generated_audio if generated_audio is not None else load_audio(estimate_path, sample_rate)
 
@@ -1095,7 +1103,7 @@ def compute_row(cfg, category, pair, metrics, dnsmos=None, wer=None, item_index=
             elif name == "wer":
                 hypothesis_audio = generated_audio if generated_audio is not None else estimate_path
                 reference_text, hypothesis_text, wer_value = wer.texts(
-                    pair["source"],
+                    pair.get("source"),
                     hypothesis_audio,
                     pair.get("transcript"),
                 )

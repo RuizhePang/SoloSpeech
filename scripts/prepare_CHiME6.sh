@@ -238,31 +238,27 @@ for session, segments in segments_by_session.items():
             continue
 
         mix_audio_path = find_array_audio(session, segment)
-        source_audio_path = find_worn_audio(session, speaker)
         enrollment = next(
             (item for item in enrollment_candidates[(session, speaker)] if item[0] != idx),
             None,
         )
-        if mix_audio_path is None or source_audio_path is None or enrollment is None:
+        if mix_audio_path is None or enrollment is None:
             skipped += 1
             continue
 
         item_id = safe_id(f"{session}_{idx:05d}_{speaker}_{segment.get('start_time')}_{segment.get('end_time')}")
         mix_out = processed_dir / "mix" / f"{item_id}.wav"
-        source_out = processed_dir / "source" / f"{item_id}.wav"
         enrollment_out = processed_dir / "enrollment" / f"{item_id}.wav"
 
         write_clip(mix_out, read_clip(mix_audio_path, start, end))
-        write_clip(source_out, read_clip(source_audio_path, start, end))
         _, enr_start, enr_end, enr_path = enrollment
         write_clip(enrollment_out, read_clip(enr_path, enr_start, enr_end))
 
         manifest_rows.append(
             {
                 "id": item_id,
-                "category": "all",
+                "category": "system",
                 "mix": str(mix_out.resolve()),
-                "source": str(source_out.resolve()),
                 "enrollment": str(enrollment_out.resolve()),
                 "transcript": normalize_text(segment["words"]),
                 "session": session,
@@ -271,7 +267,7 @@ for session, segments in segments_by_session.items():
                 "end_time": segment["end_time"],
                 "array": str(segment.get("ref") or array),
                 "channel": channel,
-                "source_recording": str(source_audio_path),
+                "enrollment_recording": str(enr_path),
                 "mix_recording": str(mix_audio_path),
             }
         )
@@ -286,7 +282,6 @@ with manifest_path.open("w", newline="") as f:
         "id",
         "category",
         "mix",
-        "source",
         "enrollment",
         "transcript",
         "session",
@@ -295,7 +290,7 @@ with manifest_path.open("w", newline="") as f:
         "end_time",
         "array",
         "channel",
-        "source_recording",
+        "enrollment_recording",
         "mix_recording",
     ]
     writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -310,4 +305,4 @@ PY
 echo "Done."
 echo "Manifest: ${manifest_path}"
 echo "Run evaluation with:"
-echo "  ./run.sh --stage 7 --test_dir ${out_dir} --test_manifest ${manifest_path}"
+echo "  ./run.sh --stage 7 --metrics system_wer --test_dir ${out_dir} --test_manifest ${manifest_path}"
