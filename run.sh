@@ -41,7 +41,10 @@ config=pretrained
 # config=SoloSpeech
 librimix_sample_ratio=0.0001
 metrics=null
+
 eval_config=default
+eval_config=save_audio
+
 test_dir=null
 test_manifest=null
 
