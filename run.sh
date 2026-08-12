@@ -168,11 +168,6 @@ fi
 
 if [[ $stage -le 7 && $stop_stage -ge 7 ]]; then
     export PYTHONPATH="$PWD:$PWD/solospeech/stable_audio_vae:${PYTHONPATH:-}"
-    export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
-    export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
-    export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
-    export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
-    export ORT_DISABLE_CPU_AFFINITY="${ORT_DISABLE_CPU_AFFINITY:-1}"
     explog="$log_dir/evaluation.log"
     if [[ -f "$explog" ]]; then
         echo "Log file $explog already exists. Please remove it before running the script."
