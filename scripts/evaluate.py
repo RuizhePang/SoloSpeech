@@ -860,15 +860,24 @@ def audio_sample_dir(cfg, category, pair):
     return get_evaluation_root(cfg) / "audio_samples" / category / cfg.evaluation.split / safe_name(pair["id"])
 
 
-def select_audio_sample_indices(cfg, pairs):
+def maybe_limit_pairs(cfg, pairs, category):
+    max_items = cfg.evaluation.max_items
+    if max_items:
+        pairs = pairs[:max_items]
+
     if not save_audio_outputs(cfg):
-        return set()
+        return pairs
+
     total = len(pairs)
     num_samples = min(save_audio_num_samples(cfg), total)
-    if num_samples <= 0:
-        return set()
+    if num_samples <= 0 or total == 0:
+        return []
+
     rng = random.Random(save_audio_seed(cfg))
-    return set(rng.sample(range(1, total + 1), num_samples))
+    selected_indices = sorted(rng.sample(range(total), num_samples))
+    selected_pairs = [pairs[idx] for idx in selected_indices]
+    logger.info(f"Selected {len(selected_pairs)}/{total} random {category} samples for evaluation and audio saving")
+    return selected_pairs
 
 
 def save_demo_audio_bundle(cfg, category, pair):
@@ -1040,10 +1049,9 @@ def run_category_pipeline(
     rows = []
     label = f"Evaluate {category} pipeline"
     total = len(pairs)
-    audio_sample_indices = select_audio_sample_indices(cfg, pairs)
-    if audio_sample_indices:
+    if save_audio_outputs(cfg) and total > 0:
         sample_dir = get_evaluation_root(cfg) / "audio_samples" / category / cfg.evaluation.split
-        logger.info(f"Saving {len(audio_sample_indices)} random {category} audio samples to {sample_dir}")
+        logger.info(f"Saving {total} {category} audio samples to {sample_dir}")
 
     for idx, pair in enumerate(progress_iter(pairs, label, eval_log_every(cfg)), start=1):
         if category == "compressor":
@@ -1056,7 +1064,7 @@ def run_category_pipeline(
         else:
             raise ValueError(f"Unsupported evaluation category: {category}")
 
-        if idx in audio_sample_indices:
+        if save_audio_outputs(cfg):
             save_demo_audio_bundle(cfg, category, pair)
 
         row = compute_row(
@@ -1116,14 +1124,11 @@ def main(cfg: DictConfig):
     for metric in metrics:
         by_category[category_for_metric(metric)].append(metric)
 
-    max_items = cfg.evaluation.max_items
     dnsmos = DNSMOS(cfg.evaluation.dnsmos_num_threads) if any(metric.endswith("_dnsmos") for metric in metrics) else None
     wer = WERComputer(cfg) if any(metric.endswith("_wer") for metric in metrics) else None
 
     if "compressor" in by_category:
-        compressor_pairs = get_compressor_audio_pairs(cfg)
-        if max_items:
-            compressor_pairs = compressor_pairs[:max_items]
+        compressor_pairs = maybe_limit_pairs(cfg, get_compressor_audio_pairs(cfg), "compressor")
         rows = run_category_pipeline(
             cfg,
             "compressor",
@@ -1136,9 +1141,7 @@ def main(cfg: DictConfig):
         write_results(cfg, "compressor", rows)
 
     if "extractor" in by_category:
-        extractor_pairs = get_extractor_audio_pairs(cfg)
-        if max_items:
-            extractor_pairs = extractor_pairs[:max_items]
+        extractor_pairs = maybe_limit_pairs(cfg, get_extractor_audio_pairs(cfg), "extractor")
         rows = run_category_pipeline(
             cfg,
             "extractor",
@@ -1151,9 +1154,7 @@ def main(cfg: DictConfig):
         write_results(cfg, "extractor", rows)
 
     if "corrector" in by_category:
-        corrector_pairs = get_corrector_audio_pairs(cfg)
-        if max_items:
-            corrector_pairs = corrector_pairs[:max_items]
+        corrector_pairs = maybe_limit_pairs(cfg, get_corrector_audio_pairs(cfg), "corrector")
         rows = run_category_pipeline(
             cfg,
             "corrector",
@@ -1167,9 +1168,7 @@ def main(cfg: DictConfig):
         write_results(cfg, "corrector", rows)
 
     if "system" in by_category:
-        system_pairs = get_system_audio_pairs(cfg)
-        if max_items:
-            system_pairs = system_pairs[:max_items]
+        system_pairs = maybe_limit_pairs(cfg, get_system_audio_pairs(cfg), "system")
         rows = run_category_pipeline(
             cfg,
             "system",
