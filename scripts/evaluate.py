@@ -513,6 +513,11 @@ class WERComputer:
         hypothesis = self.transcribe(estimate_path)
         return float(self.wer_fn(reference, hypothesis))
 
+    def texts(self, source_path, estimate_path, reference_text=None):
+        reference = self.normalizer(str(reference_text)) if reference_text else self.reference_text(source_path)
+        hypothesis = self.transcribe(estimate_path)
+        return reference, hypothesis, float(self.wer_fn(reference, hypothesis))
+
 
 def load_librispeech_transcripts(cfg):
     librispeech_root = get_librimix_storage_root(cfg) / "LibriSpeech"
@@ -899,6 +904,12 @@ def save_audio_array(path, sample_rate, audio):
     save_audio(path, sample_rate, torch.from_numpy(audio))
 
 
+def save_text(path, text):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(text).strip() + "\n")
+
+
 def safe_name(value):
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_") or "sample"
 
@@ -940,6 +951,26 @@ def save_demo_audio_bundle(cfg, category, pair):
         save_audio_array(output_dir / "extractor.wav", sample_rate, pair["estimate_audio"])
     if pair.get("system_audio") is not None:
         save_audio_array(output_dir / "final.wav", sample_rate, pair["system_audio"])
+    if pair.get("reference_text") is not None:
+        save_text(output_dir / "reference.txt", pair["reference_text"])
+    if pair.get("hypothesis_text") is not None:
+        save_text(output_dir / "hypothesis.txt", pair["hypothesis_text"])
+
+
+def ensure_demo_transcripts(category, pair, wer):
+    if wer is None:
+        return
+
+    if pair.get("reference_text") is None or pair.get("hypothesis_text") is None:
+        generated_audio = pair.get("system_audio") if category in ("corrector", "system") else pair.get("estimate_audio")
+        if generated_audio is not None:
+            reference_text, hypothesis_text, _ = wer.texts(
+                pair["source"],
+                generated_audio,
+                pair.get("transcript"),
+            )
+            pair["reference_text"] = reference_text
+            pair["hypothesis_text"] = hypothesis_text
 
 
 def resolve_corrector_ckpt(cfg):
@@ -1056,7 +1087,14 @@ def compute_row(cfg, category, pair, metrics, dnsmos=None, wer=None, item_index=
                     row.update(dnsmos(estimate_path, sample_rate))
             elif name == "wer":
                 hypothesis_audio = generated_audio if generated_audio is not None else estimate_path
-                row[name] = wer(pair["source"], hypothesis_audio, pair.get("transcript"))
+                reference_text, hypothesis_text, wer_value = wer.texts(
+                    pair["source"],
+                    hypothesis_audio,
+                    pair.get("transcript"),
+                )
+                row[name] = wer_value
+                pair["reference_text"] = reference_text
+                pair["hypothesis_text"] = hypothesis_text
             else:
                 raise ValueError(f"Unsupported metric: {metric}")
         except Exception as exc:
@@ -1114,9 +1152,6 @@ def run_category_pipeline(
         else:
             raise ValueError(f"Unsupported evaluation category: {category}")
 
-        if save_audio_outputs(cfg):
-            save_demo_audio_bundle(cfg, category, pair)
-
         row = compute_row(
             cfg,
             category,
@@ -1127,6 +1162,9 @@ def run_category_pipeline(
             item_index=idx,
             total_items=total,
         )
+        if save_audio_outputs(cfg):
+            ensure_demo_transcripts(category, pair, wer)
+            save_demo_audio_bundle(cfg, category, pair)
         if row is not None:
             rows.append(row)
     return rows
@@ -1193,7 +1231,7 @@ def main(cfg: DictConfig):
     validate_decode_std_consistency(cfg, by_category)
 
     dnsmos = DNSMOS(cfg.evaluation.dnsmos_num_threads) if any(metric.endswith("_dnsmos") for metric in metrics) else None
-    wer = WERComputer(cfg) if any(metric.endswith("_wer") for metric in metrics) else None
+    wer = WERComputer(cfg) if save_audio_outputs(cfg) or any(metric.endswith("_wer") for metric in metrics) else None
 
     if "compressor" in by_category:
         compressor_pairs = maybe_limit_pairs(cfg, get_compressor_audio_pairs(cfg), "compressor")
