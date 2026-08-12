@@ -12,6 +12,7 @@ max_items: null
 overwrite: false
 whisper_model: large-v3-turbo
 dnsmos_num_threads: 1
+log_every: 50
 
 compressor:
   sources:

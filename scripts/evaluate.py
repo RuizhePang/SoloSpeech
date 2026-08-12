@@ -13,7 +13,6 @@ import numpy as np
 import torch
 from loguru import logger
 from omegaconf import DictConfig, ListConfig, OmegaConf
-from tqdm import tqdm
 
 
 METRIC_GROUPS = {
@@ -344,6 +343,36 @@ def mean_std(values):
     return float(np.mean(arr)), float(np.std(arr))
 
 
+def progress_iter(items, label, log_every=50):
+    total = len(items)
+    if total == 0:
+        logger.info(f"{label}: no items")
+        return
+
+    logger.info(f"{label}: started, total={total}")
+    for idx, item in enumerate(items, start=1):
+        yield item
+        if idx == total or idx % log_every == 0:
+            logger.info(f"{label}: {idx}/{total}")
+
+
+def eval_log_every(cfg):
+    return max(int(cfg.evaluation.get("log_every", 50)), 1)
+
+
+def format_item_metrics(row):
+    fields = []
+    for key in sorted(row):
+        if key in ("id", "source", "estimate"):
+            continue
+        value = row[key]
+        if isinstance(value, float):
+            fields.append(f"{key}={value:.4f}")
+        else:
+            fields.append(f"{key}={value}")
+    return ", ".join(fields) if fields else "no metrics"
+
+
 def load_audio(path, sample_rate):
     audio, _ = librosa.load(path, sr=sample_rate, mono=True)
     return audio.astype(np.float32)
@@ -639,7 +668,7 @@ def decode_compressor_outputs(cfg, pairs):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     autoencoder = load_autoencoder(cfg).to(device)
     model_type = cfg.compressor.model_type
-    for pair in tqdm(required, desc="Evaluate compressor"):
+    for pair in progress_iter(required, "Evaluate compressor", eval_log_every(cfg)):
         encoded = encode_audio(autoencoder, pair["source"], cfg.evaluation.sample_rate, device, model_type)
         audio = decode_latent(
             autoencoder,
@@ -766,7 +795,7 @@ def generate_extractor_outputs(cfg, pairs):
     scheduler = make_extractor_scheduler(cfg)
     model_type = cfg.compressor.model_type
 
-    for pair in tqdm(required, desc="Run extractor"):
+    for pair in progress_iter(required, "Run extractor", eval_log_every(cfg)):
         if "mix" not in pair:
             raise RuntimeError(f"Extractor evaluation requires mix for {pair['id']}")
         reference_path = pair.get("reference") or pair["source"]
@@ -828,7 +857,7 @@ def run_corrector_outputs(cfg, pairs):
     model.eval(no_ema=False)
     model.to(device)
 
-    for pair, output_path in tqdm(required, desc="Run corrector"):
+    for pair, output_path in progress_iter(required, "Run corrector", eval_log_every(cfg)):
         estimate = torch.from_numpy(load_audio(pair["estimate"], cfg.evaluation.sample_rate)).unsqueeze(0).to(device)
         mixture = torch.from_numpy(load_audio(pair["mix"], cfg.evaluation.sample_rate)).unsqueeze(0).to(device)
         length = min(estimate.shape[-1], mixture.shape[-1])
@@ -866,7 +895,7 @@ def run_corrector_outputs(cfg, pairs):
 def compute_rows(cfg, category, pairs, metrics, dnsmos=None, wer=None):
     rows = []
     sample_rate = cfg.evaluation.sample_rate
-    for pair in tqdm(pairs, desc=f"Evaluate {category}"):
+    for pair in progress_iter(pairs, f"Evaluate {category}", eval_log_every(cfg)):
         if category in ("corrector", "system"):
             estimate_path = pair.get("system_estimate") or pair.get("estimate")
         else:
@@ -905,6 +934,7 @@ def compute_rows(cfg, category, pairs, metrics, dnsmos=None, wer=None):
             except Exception as exc:
                 logger.warning(f"{metric} failed for {estimate_path}: {exc}")
                 row[name] = float("nan")
+        logger.info(f"{category} item {pair['id']}: {format_item_metrics(row)}")
         rows.append(row)
     return rows
 
