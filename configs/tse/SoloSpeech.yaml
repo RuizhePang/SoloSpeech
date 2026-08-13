@@ -2,7 +2,7 @@ defaults:
   - compressor: stftvae_16k_320x
   - extractor: baseline
   - corrector: fastgeco
-  - evaluation: default
+  - evaluation: Libri2Mix/default
   - _self_
 
 save_dir: null

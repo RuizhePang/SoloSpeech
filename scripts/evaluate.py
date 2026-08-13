@@ -36,18 +36,28 @@ def hydra_choice(name):
 
 
 def get_test_data(cfg):
-    value = cfg.evaluation.get("test_name", None)
+    value = cfg.evaluation.get("dataset", None)
+    if is_null_value(value):
+        value = cfg.evaluation.get("test_name", None)
     if is_null_value(value):
         value = cfg.evaluation.get("test_data", "Libri2Mix")
     return str(value)
 
 
+def data_relative_path(cfg, value):
+    path = Path(str(value)).expanduser()
+    return path if path.is_absolute() else Path(cfg.data_dir) / path
+
+
 def get_test_data_root(cfg):
-    test_dir = cfg.evaluation.get("test_dir", None)
+    paths_cfg = cfg.evaluation.get("paths", {})
+    test_dir = paths_cfg.get("root", None)
+    if is_null_value(test_dir):
+        test_dir = cfg.evaluation.get("test_dir", None)
     if is_null_value(test_dir):
         test_dir = cfg.evaluation.get("test_data_dir", None)
     if not is_null_value(test_dir):
-        return Path(test_dir)
+        return data_relative_path(cfg, test_dir)
     return Path(cfg.data_dir) / get_test_data(cfg)
 
 
@@ -56,14 +66,15 @@ def get_librimix_storage_root(cfg):
 
 
 def get_raw_dataset_name(cfg):
-    raw_dataset_name = cfg.evaluation.get("raw_dataset_name", None)
+    paths_cfg = cfg.evaluation.get("paths", {})
+    raw_dataset_name = paths_cfg.get("raw_dataset_name", None)
+    if is_null_value(raw_dataset_name):
+        raw_dataset_name = cfg.evaluation.get("raw_dataset_name", None)
     return str(raw_dataset_name) if not is_null_value(raw_dataset_name) else get_test_data(cfg)
 
 
 def get_evaluation_root(cfg):
-    root = Path(cfg.save_dir) / "evaluation"
-    test_data = get_test_data(cfg)
-    return root if test_data == "Libri2Mix" else root / test_data
+    return Path(cfg.save_dir) / "evaluation" / hydra_choice("evaluation")
 
 
 def is_null_value(value):
@@ -75,10 +86,13 @@ def is_null_value(value):
 
 
 def get_manifest_path(cfg):
-    manifest = cfg.evaluation.get("manifest", None)
+    paths_cfg = cfg.evaluation.get("paths", {})
+    manifest = paths_cfg.get("manifest", None)
+    if is_null_value(manifest):
+        manifest = cfg.evaluation.get("manifest", None)
     if is_null_value(manifest):
         return None
-    return Path(str(manifest)).expanduser()
+    return data_relative_path(cfg, manifest)
 
 
 def normalize_manifest_row(row):
@@ -132,6 +146,7 @@ def path_for(value, cfg, manifest_dir):
     candidates = [
         get_test_data_root(cfg) / path,
         manifest_dir / path,
+        Path(cfg.data_dir) / path,
         Path.cwd() / path,
     ]
     for candidate in candidates:

@@ -324,4 +324,4 @@ PY
 echo "Done."
 echo "Manifest: ${manifest_path}"
 echo "Run evaluation with:"
-echo "  ./run.sh --stage 7 --eval_config default --test_dir ${out_dir} --test_manifest ${manifest_path}"
+echo "  ./run.sh --stage 7 --eval_config LibriCSS/default"

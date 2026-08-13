@@ -42,13 +42,15 @@ stop_stage=$stage
 
 config=pretrained
 # config=SoloSpeech
+#
+eval_dataset=Libri2Mix
+eval_dataset=LibriCSS
+eval_conf=default
+eval_conf=save_audio
 
-eval_config=default
-# eval_config=save_audio
+eval_config="${eval_dataset}/${eval_conf}"
 
 metrics=null
-test_dir=null
-test_manifest=null
 
 save_dir="experiments/${config}"
 log_dir="$save_dir/logs"
@@ -58,12 +60,6 @@ log_dir="$save_dir/logs"
 evaluation_overrides=(evaluation="${eval_config}")
 if [[ "$metrics" != "null" && -n "$metrics" ]]; then
     evaluation_overrides+=(evaluation.metrics="${metrics}")
-fi
-if [[ "$test_dir" != "null" && -n "$test_dir" ]]; then
-    evaluation_overrides+=(evaluation.test_dir="${test_dir}")
-fi
-if [[ "$test_manifest" != "null" && -n "$test_manifest" ]]; then
-    evaluation_overrides+=(evaluation.manifest="${test_manifest}")
 fi
 
 mkdir -p "$log_dir"
@@ -173,12 +169,13 @@ fi
 
 if [[ $stage -le 7 && $stop_stage -ge 7 ]]; then
     export PYTHONPATH="$PWD:$PWD/solospeech/stable_audio_vae:${PYTHONPATH:-}"
-    explog="$log_dir/evaluation.${eval_config}.log"
+    eval_log_name=${eval_config//\//_}
+    explog="$log_dir/evaluation.${eval_log_name}.log"
     if [[ -f "$explog" ]]; then
         echo "Log file $explog already exists. Please remove it before running the script."
         exit 1
     fi
-    echo "Stage 7: running evaluation with config: $config eval_config: $eval_config test_dir: $test_dir manifest: $test_manifest metrics_override: $metrics
+    echo "Stage 7: running evaluation with config: $config eval_config: $eval_config metrics_override: $metrics
     Logging to: $explog"
     "$cmd" "${scheduler_arguments[@]}" "$explog" \
         "$PYTHON_BIN" scripts/evaluate.py \

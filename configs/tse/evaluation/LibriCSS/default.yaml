@@ -1,10 +1,11 @@
 metrics:
   - system
 
-test_name: Libri2Mix
-test_dir: null
-manifest: null
-raw_dataset_name: Libri2Mix
+dataset: LibriCSS
+paths:
+  root: LibriCSS
+  manifest: LibriCSS/test/manifest.csv
+  raw_dataset_name: LibriCSS
 split: test
 
 sample_rate: 16000
