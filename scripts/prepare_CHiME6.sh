@@ -21,7 +21,7 @@ manifest_path="${processed_dir}/manifest.csv"
 
 mkdir -p "${raw_dir}" "${processed_dir}"
 
-for tool in tar; do
+for tool in gzip tar; do
     if ! command -v "${tool}" >/dev/null 2>&1; then
         echo "${tool} is required by CHiME-6 preparation." >&2
         exit 1
@@ -45,16 +45,17 @@ PY
 
 download() {
     local name=$1
+    local kind=${2:-tar}
     local url="${mirror}/${name}"
     local path="${raw_dir}/${name}"
 
-    if [[ -f "${path}" ]] && tar -tzf "${path}" >/dev/null 2>&1; then
+    if [[ -f "${path}" ]] && is_valid_archive "${path}" "${kind}"; then
         echo "${path} already exists and is valid. Skipping download."
         return
     fi
 
     if [[ -f "${path}" ]]; then
-        echo "${path} is not a valid tar.gz. Removing it before retrying." >&2
+        echo "${path} is not a valid ${kind} archive. Removing it before retrying." >&2
         rm -f "${path}"
     fi
 
@@ -65,14 +66,25 @@ download() {
         curl -fL --retry 5 --retry-delay 5 -C - -o "${path}" "${url}"
     fi
 
-    if ! tar -tzf "${path}" >/dev/null 2>&1; then
-        echo "Downloaded file is not a valid tar.gz: ${path}" >&2
+    if ! is_valid_archive "${path}" "${kind}"; then
+        echo "Downloaded file is not a valid ${kind} archive: ${path}" >&2
         exit 1
+    fi
+}
+
+is_valid_archive() {
+    local path=$1
+    local kind=$2
+    if [[ "${kind}" == "tar" ]]; then
+        tar -tzf "${path}" >/dev/null 2>&1
+    else
+        tar -tzf "${path}" >/dev/null 2>&1 || gzip -t "${path}" >/dev/null 2>&1
     fi
 }
 
 extract_once() {
     local name=$1
+    local kind=${2:-tar}
     local marker="${raw_dir}/.${name}.extracted"
     if [[ -f "${marker}" ]]; then
         echo "${name} already extracted. Skipping extraction."
@@ -80,14 +92,46 @@ extract_once() {
     fi
 
     echo "Extracting ${raw_dir}/${name}"
-    tar -xzf "${raw_dir}/${name}" -C "${raw_dir}"
+    if tar -xzf "${raw_dir}/${name}" -C "${raw_dir}"; then
+        touch "${marker}"
+        return
+    fi
+
+    if [[ "${kind}" != "gzip" ]]; then
+        echo "Failed to extract tar.gz archive: ${raw_dir}/${name}" >&2
+        exit 1
+    fi
+
+    "${python_bin}" - "${raw_dir}/${name}" "${raw_dir}" <<'PY'
+import gzip
+import shutil
+import sys
+import tarfile
+from pathlib import Path
+
+archive = Path(sys.argv[1]).resolve()
+out_dir = Path(sys.argv[2]).resolve()
+tmp = out_dir / archive.name.replace(".gz", "")
+
+with gzip.open(archive, "rb") as src, tmp.open("wb") as dst:
+    shutil.copyfileobj(src, dst)
+
+if tarfile.is_tarfile(tmp):
+    with tarfile.open(tmp) as tar:
+        tar.extractall(out_dir)
+    tmp.unlink()
+else:
+    target = out_dir / tmp.name
+    if tmp != target:
+        shutil.move(str(tmp), str(target))
+PY
     touch "${marker}"
 }
 
-download CHiME6_eval.tar.gz
-download CHiME6_transcriptions.tar.gz
-extract_once CHiME6_eval.tar.gz
-extract_once CHiME6_transcriptions.tar.gz
+download CHiME6_eval.tar.gz tar
+download CHiME6_transcriptions.tar.gz gzip
+extract_once CHiME6_eval.tar.gz tar
+extract_once CHiME6_transcriptions.tar.gz gzip
 
 echo "Writing CHiME-6 eval manifest to ${manifest_path}"
 "${python_bin}" - \
