@@ -371,6 +371,15 @@ def save_audio_seed(cfg):
     return int(cfg.evaluation.get("save_audio_seed", 2024))
 
 
+def extractor_num_candidates(cfg):
+    return max(1, int(cfg.evaluation.extractor.get("num_candidates", 1)))
+
+
+def extractor_rerank_enabled(cfg):
+    rerank_cfg = cfg.evaluation.extractor.get("rerank", {})
+    return bool(rerank_cfg.get("enabled", False)) and extractor_num_candidates(cfg) > 1
+
+
 def format_item_metrics(row):
     fields = []
     for key in sorted(row):
@@ -843,6 +852,50 @@ def make_extractor_scheduler(cfg):
     return scheduler
 
 
+def make_speaker_reranker(cfg, device):
+    if not extractor_rerank_enabled(cfg):
+        return None
+
+    rerank_cfg = cfg.evaluation.extractor.rerank
+    provider = str(rerank_cfg.get("provider", "ecapa")).lower()
+    if provider != "ecapa":
+        raise ValueError(f"Unsupported extractor rerank provider: {provider}")
+
+    try:
+        from speechbrain.pretrained.interfaces import Pretrained
+    except ImportError as exc:
+        raise RuntimeError("evaluation.extractor.rerank.provider=ecapa requires speechbrain") from exc
+
+    class Encoder(Pretrained):
+        MODULES_NEEDED = [
+            "compute_features",
+            "mean_var_norm",
+            "embedding_model",
+        ]
+
+        def encode_batch(self, wavs, wav_lens=None, normalize=False):
+            if wavs.ndim == 1:
+                wavs = wavs.unsqueeze(0)
+            if wav_lens is None:
+                wav_lens = torch.ones(wavs.shape[0], device=self.device)
+            wavs = wavs.to(self.device).float()
+            wav_lens = wav_lens.to(self.device)
+            feats = self.mods.compute_features(wavs)
+            feats = self.mods.mean_var_norm(feats, wav_lens)
+            embeddings = self.mods.embedding_model(feats, wav_lens)
+            if normalize:
+                embeddings = self.hparams.mean_var_norm_emb(
+                    embeddings,
+                    torch.ones(embeddings.shape[0], device=self.device),
+                )
+            return embeddings
+
+    source = str(rerank_cfg.get("source", "yangwang825/ecapa-tdnn-vox2"))
+    logger.info(f"Loading extractor candidate reranker: provider={provider}, source={source}")
+    model = Encoder.from_hparams(source=source, run_opts={"device": str(device)})
+    return {"provider": provider, "model": model}
+
+
 def make_extractor_runtime(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return {
@@ -850,16 +903,18 @@ def make_extractor_runtime(cfg):
         "autoencoder": load_autoencoder(cfg).to(device),
         "extractor": load_extractor(cfg).to(device),
         "scheduler": make_extractor_scheduler(cfg),
+        "reranker": make_speaker_reranker(cfg, device),
         "model_type": cfg.compressor.model_type,
     }
 
 
 @torch.no_grad()
 def sample_extractor_output(model, scheduler, mix_item, reference_item, cfg, device):
-    mixture = mix_item["latent"].unsqueeze(0).to(device)
-    reference = reference_item["latent"].unsqueeze(0).to(device)
-    lengths = torch.LongTensor([mixture.shape[1]]).to(device)
-    reference_lengths = torch.LongTensor([reference.shape[1]]).to(device)
+    num_candidates = extractor_num_candidates(cfg)
+    mixture = mix_item["latent"].unsqueeze(0).to(device).repeat(num_candidates, 1, 1)
+    reference = reference_item["latent"].unsqueeze(0).to(device).repeat(num_candidates, 1, 1)
+    lengths = torch.LongTensor([mixture.shape[1]] * num_candidates).to(device)
+    reference_lengths = torch.LongTensor([reference.shape[1]] * num_candidates).to(device)
     generator = torch.Generator(device=device).manual_seed(cfg.evaluation.extractor.seed)
 
     pred = torch.randn(mixture.shape, generator=generator, device=device)
@@ -880,7 +935,36 @@ def sample_extractor_output(model, scheduler, mix_item, reference_item, cfg, dev
             eta=cfg.evaluation.extractor.eta,
             generator=generator,
         ).prev_sample
-    return pred.squeeze(0).detach()
+    return pred.detach()
+
+
+@torch.no_grad()
+def select_extractor_candidate(candidates, reference_path, cfg, runtime):
+    if candidates.ndim == 1:
+        return candidates, None
+    if candidates.shape[0] == 1:
+        return candidates[0], None
+
+    reranker = runtime.get("reranker")
+    if reranker is None:
+        return candidates[0], None
+
+    reference_audio = torch.from_numpy(load_audio(reference_path, cfg.evaluation.sample_rate))
+    candidate_audio = candidates.detach().float().cpu()
+    embeddings = reranker["model"].encode_batch(candidate_audio).squeeze()
+    reference_embedding = reranker["model"].encode_batch(reference_audio).squeeze()
+    if embeddings.ndim == 1:
+        embeddings = embeddings.unsqueeze(0)
+    similarities = torch.nn.functional.cosine_similarity(
+        embeddings,
+        reference_embedding.unsqueeze(0),
+        dim=1,
+    )
+    best_index = int(torch.argmax(similarities).item())
+    return candidates[best_index], {
+        "index": best_index,
+        "score": float(similarities[best_index].detach().cpu().item()),
+    }
 
 
 def generate_extractor_output(cfg, pair, runtime):
@@ -903,7 +987,7 @@ def generate_extractor_output(cfg, pair, runtime):
 
     pred = sample_extractor_output(extractor, scheduler, mix_item, reference_item, cfg, device)
 
-    audio = decode_latent(
+    candidates = decode_latent(
         autoencoder,
         pred,
         decode_std_for(cfg, source_item, mix_item, reference_item),
@@ -911,7 +995,12 @@ def generate_extractor_output(cfg, pair, runtime):
         mix_item["num_samples"],
         device,
     )
-    pair["estimate_audio"] = tensor_to_audio_array(audio)
+    candidates = candidates.detach().float().cpu().squeeze(1)
+    selected_audio, rerank_info = select_extractor_candidate(candidates, reference_path, cfg, runtime)
+    if rerank_info is not None:
+        pair["rerank_index"] = rerank_info["index"]
+        pair["rerank_score"] = rerank_info["score"]
+    pair["estimate_audio"] = tensor_to_audio_array(selected_audio)
     return True
 
 

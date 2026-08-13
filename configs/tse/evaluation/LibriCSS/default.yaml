@@ -25,9 +25,14 @@ compressor:
 extractor:
   checkpoint_path: null
   num_infer_steps: 50
+  num_candidates: 4
   eta: 0.0
   seed: 2024
   decode_std: mixture
+  rerank:
+    enabled: true
+    provider: ecapa
+    source: yangwang825/ecapa-tdnn-vox2
 
 corrector:
   checkpoint_path: null

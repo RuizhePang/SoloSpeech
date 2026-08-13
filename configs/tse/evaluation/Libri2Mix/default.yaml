@@ -1,11 +1,11 @@
 metrics:
-  - system_wer
+  - system
 
-dataset: CHiME6
+dataset: Libri2Mix
 paths:
-  root: CHiME6
-  manifest: CHiME6/test/manifest.csv
-  raw_dataset_name: CHiME6
+  root: Libri2Mix
+  manifest: null
+  raw_dataset_name: Libri2Mix
 split: test
 
 sample_rate: 16000
@@ -24,7 +24,7 @@ compressor:
 
 extractor:
   checkpoint_path: null
-  num_infer_steps: 50
+  num_infer_steps: 200
   num_candidates: 4
   eta: 0.0
   seed: 2024

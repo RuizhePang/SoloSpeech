@@ -64,6 +64,8 @@ dataset/
 datasets/
 LibriMixData/
 Libri2Mix/
+!configs/tse/evaluation/Libri2Mix/
+!configs/tse/evaluation/Libri2Mix/*.yaml
 Libri3Mix/
 *.csv.tmp
 
