@@ -14,7 +14,17 @@ array=${3:-U01}
 channel=${4:-CH1}
 max_items=${5:-0}
 
-mirror=${CHIME6_MIRROR:-"https://www.openslr.org/resources/150"}
+if [[ -n "${CHIME6_MIRROR:-}" ]]; then
+    chime6_mirrors=("${CHIME6_MIRROR}")
+elif [[ -n "${CHIME6_MIRRORS:-}" ]]; then
+    read -r -a chime6_mirrors <<<"${CHIME6_MIRRORS}"
+else
+    chime6_mirrors=(
+        "https://openslr.trmal.net/resources/150"
+        "https://openslr.elda.org/resources/150"
+        "https://www.openslr.org/resources/150"
+    )
+fi
 raw_dir="${out_dir}/raw"
 processed_dir="${out_dir}/test"
 manifest_path="${processed_dir}/manifest.csv"
@@ -46,7 +56,6 @@ PY
 download() {
     local name=$1
     local kind=${2:-tar}
-    local url="${mirror}/${name}"
     local path="${raw_dir}/${name}"
 
     if [[ -f "${path}" ]] && is_valid_archive "${path}" "${kind}"; then
@@ -59,17 +68,31 @@ download() {
         rm -f "${path}"
     fi
 
-    echo "Downloading ${url}"
-    if command -v wget >/dev/null 2>&1; then
-        wget -c --no-check-certificate -O "${path}" "${url}"
-    else
-        curl -fL --retry 5 --retry-delay 5 -C - -o "${path}" "${url}"
-    fi
+    local mirror_url url
+    for mirror_url in "${chime6_mirrors[@]}"; do
+        url="${mirror_url%/}/${name}"
+        echo "Downloading ${url}"
+        rm -f "${path}"
+        if command -v wget >/dev/null 2>&1; then
+            wget --tries=5 --waitretry=5 --no-check-certificate -O "${path}" "${url}" || true
+        else
+            curl -fL --retry 5 --retry-delay 5 -o "${path}" "${url}" || true
+        fi
 
-    if ! is_valid_archive "${path}" "${kind}"; then
-        echo "Downloaded file is not a valid ${kind} archive: ${path}" >&2
-        exit 1
-    fi
+        if [[ -f "${path}" ]] && is_valid_archive "${path}" "${kind}"; then
+            return
+        fi
+
+        if [[ -f "${path}" ]]; then
+            echo "Downloaded file from ${url} is not a valid ${kind} archive." >&2
+            file "${path}" >&2 || true
+            rm -f "${path}"
+        fi
+    done
+
+    echo "Failed to download a valid ${kind} archive for ${name}." >&2
+    echo "Tried mirrors: ${chime6_mirrors[*]}" >&2
+    exit 1
 }
 
 is_valid_archive() {
